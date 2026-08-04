@@ -1,0 +1,62 @@
+# Shell
+
+A custom desktop shell for Hyprland, written in Rust.
+
+## Development workflow
+
+Development happens in a nested Hyprland compositor rather than the live
+desktop session.
+
+Start the development session from a terminal in Hyprland:
+
+```sh
+scripts/dev-session
+```
+
+This builds `target/debug/shell`, starts a nested Hyprland instance with
+`dev/hyprland.lua`, and launches the binary inside it. The 1280x720 host window
+is created silently on a dedicated `shell-dev` workspace, so starting the
+session does not switch workspaces, steal focus, or retile the current
+workspace.
+
+The launcher stays running for the lifetime of the session. Press Ctrl+C in
+that terminal to stop it. After showing the nested session, it can also be
+stopped with Ctrl+Alt+Escape inside its window.
+
+Show the nested compositor when wanted:
+
+```sh
+scripts/dev-show
+```
+
+Inspect its monitor, layer-surface, and window state without showing it:
+
+```sh
+scripts/dev-inspect
+```
+
+Capture only the nested output:
+
+```sh
+scripts/dev-screenshot
+scripts/dev-screenshot target/dev/another-name.png
+```
+
+The default screenshot path is `target/dev/screenshot.png`.
+
+The nested compositor has its own config, Hyprland instance signature,
+Wayland socket, and output. Inspection and screenshots target those nested
+identifiers. `HYPRLAND_NO_SD_VARS=1` prevents the test compositor from
+exporting its environment into the live user session.
+
+Run the project checks with:
+
+```sh
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all-targets --all-features
+Hyprland --verify-config --config dev/hyprland.lua
+```
+
+More implementation details and relevant Hyprland documentation are collected
+in [docs/development.md](docs/development.md).

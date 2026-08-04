@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
+session_file=$runtime_dir/session
+output_file=${1:-$repo_dir/target/dev/screenshot.png}
+
+command -v grim >/dev/null || {
+    printf 'missing required command: grim\n' >&2
+    exit 1
+}
+
+if [[ ! -f $session_file ]]; then
+    printf 'no shell dev session is running; start scripts/dev-session first\n' >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$session_file"
+if ! kill -0 "$SHELL_DEV_PID" 2>/dev/null; then
+    printf 'the recorded shell dev session is no longer running\n' >&2
+    exit 1
+fi
+
+mkdir -p "$(dirname -- "$output_file")"
+WAYLAND_DISPLAY=$SHELL_DEV_WAYLAND_DISPLAY \
+HYPRLAND_INSTANCE_SIGNATURE=$SHELL_DEV_INSTANCE \
+    grim -o "$SHELL_DEV_OUTPUT" "$output_file"
+
+printf '%s\n' "$output_file"
+

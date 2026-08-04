@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
+session_file=$runtime_dir/session
+
+if [[ ! -f $session_file ]]; then
+    printf 'no shell dev session is running; start scripts/dev-session first\n' >&2
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$session_file"
+if ! kill -0 "$SHELL_DEV_PID" 2>/dev/null; then
+    printf 'the recorded shell dev session is no longer running\n' >&2
+    exit 1
+fi
+
+hyprctl -i "$SHELL_DEV_HOST_INSTANCE" dispatch \
+    "hl.dsp.focus({ workspace = 'name:shell-dev' })" >/dev/null
+
