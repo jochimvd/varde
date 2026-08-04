@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
+session_file=$runtime_dir/session
+
+for command in cargo Hyprland hyprctl jq; do
+    command -v "$command" >/dev/null || {
+        printf 'missing required command: %s\n' "$command" >&2
+        exit 1
+    }
+done
+
+if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
+    printf 'dev-session must be started from an existing Wayland session\n' >&2
+    exit 1
+fi
+
+host_instance=${HYPRLAND_INSTANCE_SIGNATURE:?dev-session must be started from Hyprland}
+
+if [[ -f $session_file ]]; then
+    # shellcheck disable=SC1090
+    source "$session_file"
+    if kill -0 "$SHELL_DEV_PID" 2>/dev/null; then
+        printf 'a shell dev session is already running (pid %s)\n' "$SHELL_DEV_PID" >&2
+        exit 1
+    fi
+fi
+
+cargo build --manifest-path "$repo_dir/Cargo.toml"
+mkdir -p "$runtime_dir"
+
+known_instances=$(hyprctl -j instances)
+launch_command="env SHELL_DEV_BINARY=$repo_dir/target/debug/shell HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 Hyprland --config $repo_dir/dev/hyprland.lua"
+hyprctl -i "$host_instance" eval \
+    "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
+float = true, size = { 1280, 720 }, center = true, \
+workspace = 'name:shell-dev silent', no_initial_focus = true, \
+no_anim = true, render_unfocused = true }))" >/dev/null
+
+compositor_pid=
+
+cleanup() {
+    if [[ -n $compositor_pid ]] && kill -0 "$compositor_pid" 2>/dev/null; then
+        kill "$compositor_pid"
+    fi
+    rm -f -- "$session_file"
+}
+trap cleanup EXIT INT TERM
+
+instance=
+for _ in {1..100}; do
+    new_instance=$(hyprctl -j instances | jq -c --argjson known "$known_instances" \
+        '.[] | select(.instance as $candidate | ($known | map(.instance) | index($candidate) | not))' | head -n 1)
+    if [[ -n $new_instance ]]; then
+        instance=$(jq -r '.instance' <<<"$new_instance")
+        compositor_pid=$(jq -r '.pid' <<<"$new_instance")
+        break
+    fi
+    sleep 0.05
+done
+
+if [[ -z $instance || -z $compositor_pid ]]; then
+    printf 'timed out waiting for the nested Hyprland instance\n' >&2
+    exit 1
+fi
+
+wayland_display=$(hyprctl -j instances | jq -r --arg instance "$instance" \
+    '.[] | select(.instance == $instance) | .wl_socket')
+
+output=
+for _ in {1..100}; do
+    output=$(hyprctl -i "$instance" -j monitors | jq -r '.[0].name // empty')
+    [[ -n $output ]] && break
+    sleep 0.05
+done
+
+if [[ -z $output ]]; then
+    printf 'timed out waiting for the nested Hyprland output\n' >&2
+    exit 1
+fi
+
+umask 077
+printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\n' \
+    "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" >"$session_file"
+
+printf 'Nested Hyprland is ready.\n'
+printf '  instance: %s\n' "$instance"
+printf '  output:   %s (1280x720)\n' "$output"
+printf '  show:     scripts/dev-show\n'
+printf '  inspect:  scripts/dev-inspect\n'
+printf '  capture:  scripts/dev-screenshot\n'
+printf 'Press Ctrl+Alt+Escape inside the nested session to stop it.\n'
+
+while kill -0 "$compositor_pid" 2>/dev/null; do
+    sleep 0.25
+done
