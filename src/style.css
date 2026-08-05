@@ -1,0 +1,165 @@
+@define-color primary_color #FFFFFF;
+@define-color secondary_color rgba(0, 0, 0, 0.85);
+@define-color tertiary_color #595959;
+@define-color accent_color #9ECE6A;
+@define-color critical_color #F38BA8;
+
+@keyframes blink-critical {
+    0% { color: inherit; }
+    50% { color: @critical_color; }
+}
+
+@keyframes blink-accent {
+    0% { color: inherit; }
+    50% { color: @accent_color; }
+}
+
+window.bar {
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    font-weight: normal;
+    font-size: 14px;
+    color: @primary_color;
+    background: @secondary_color;
+}
+
+window.bar label {
+    padding-top: 3px;
+}
+
+/* Development alignment guides. Inset shadows do not affect widget sizing. */
+.development .workspaces { box-shadow: inset 0 0 0 1px #00E5FF; }
+.development .window { box-shadow: inset 0 0 0 1px #FF9800; }
+.development .clock.date { box-shadow: inset 0 0 0 1px #E040FB; }
+.development .clock.time { box-shadow: inset 0 0 0 1px #7C4DFF; }
+.development .idle-inhibitor { box-shadow: inset 0 0 0 1px #00BCD4; }
+.development .tray { box-shadow: inset 0 0 0 1px #2979FF; }
+.development .bluetooth { box-shadow: inset 0 0 0 1px #651FFF; }
+.development .network { box-shadow: inset 0 0 0 1px #00E676; }
+.development .audio { box-shadow: inset 0 0 0 1px #FF9100; }
+.development .cpu { box-shadow: inset 0 0 0 1px #FF1744; }
+.development .memory { box-shadow: inset 0 0 0 1px #FFEA00; }
+.development .battery { box-shadow: inset 0 0 0 1px #76FF03; }
+.development .notification { box-shadow: inset 0 0 0 1px #F50057; }
+.notification-dot {
+    min-width: 5px;
+    min-height: 5px;
+    border-radius: 50%;
+    background: @accent_color;
+    box-shadow: 0 0 0 2px @secondary_color;
+}
+.development .privacy { box-shadow: inset 0 0 0 1px #1DE9B6; }
+
+.region.left {
+    margin-left: 10px;
+}
+
+.region {
+    margin-top: 1px;
+}
+
+.region.right {
+    margin-right: 10px;
+}
+
+button {
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    text-shadow: none;
+}
+
+.workspaces {
+    color: @tertiary_color;
+    font-weight: bold;
+}
+
+.workspaces button {
+    margin: 4px 1px;
+    padding: 0 5px;
+    border-radius: 5px;
+    color: @tertiary_color;
+    transition: color 200ms ease-in-out, background-color 200ms ease-in-out;
+}
+
+.workspaces button:hover {
+    color: @secondary_color;
+    background: @primary_color;
+}
+
+.workspaces button.active {
+    color: @primary_color;
+}
+
+.workspaces button.active:hover {
+    color: @secondary_color;
+}
+
+.workspaces button.urgent {
+    animation: blink-accent 2s steps(2) infinite;
+}
+
+.window {
+    margin: 0 10px 0 15px;
+}
+
+.clock {
+    padding-right: 5px;
+    padding-left: 5px;
+    font-weight: bold;
+}
+
+.clock.date {
+    margin-right: 3px;
+}
+
+.clock.time {
+    margin-left: 3px;
+}
+
+.module,
+.cpu,
+.memory,
+.battery {
+    padding-right: 5px;
+    padding-left: 5px;
+    transition: color 200ms ease-in-out;
+}
+
+.tray-icon {
+    padding-right: 5px;
+    padding-left: 5px;
+}
+
+.bluetooth.disabled,
+.network.disconnected,
+.audio.muted,
+.idle-inhibitor.deactivated {
+    color: @tertiary_color;
+}
+
+.bluetooth.discoverable,
+.bluetooth.discovering {
+    animation: blink-accent 2s steps(2) infinite;
+}
+
+.cpu.critical,
+.memory.critical,
+.battery.critical:not(.charging) {
+    animation: blink-critical 2s steps(2) infinite;
+}
+
+.privacy {
+    color: @accent_color;
+}
+
+tooltip {
+    font-family: 'JetBrainsMono Nerd Font';
+    padding: 8px 10px;
+    background: #000000;
+    border: 1px solid @tertiary_color;
+    border-radius: 8px;
+}
