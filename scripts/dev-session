@@ -32,7 +32,7 @@ cargo build --manifest-path "$repo_dir/Cargo.toml"
 mkdir -p "$runtime_dir"
 
 known_instances=$(hyprctl -j instances)
-launch_command="env SHELL_DEV_BINARY=$repo_dir/target/debug/shell HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 Hyprland --config $repo_dir/dev/hyprland.lua"
+launch_command="env SHELL_DEVELOPMENT=1 SHELL_DEV_BINARY=$repo_dir/target/debug/shell HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 Hyprland --config $repo_dir/dev/hyprland.lua"
 hyprctl -i "$host_instance" eval \
     "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
 float = true, size = { 1280, 720 }, center = true, \
@@ -88,7 +88,7 @@ printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nS
 printf 'Nested Hyprland is ready.\n'
 printf '  instance: %s\n' "$instance"
 printf '  output:   %s (1280x720)\n' "$output"
-printf '  show:     scripts/dev-show\n'
+printf '  show:     scripts/dev-show --focus\n'
 printf '  inspect:  scripts/dev-inspect\n'
 printf '  capture:  scripts/dev-screenshot\n'
 printf 'Press Ctrl+Alt+Escape inside the nested session to stop it.\n'

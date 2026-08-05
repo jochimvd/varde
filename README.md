@@ -2,6 +2,16 @@
 
 A custom desktop shell for Hyprland, written in Rust.
 
+The status bar currently provides Hyprland workspaces and window titles,
+date and time, Bluetooth, network and audio state, CPU and memory usage,
+notifications, idle inhibition, privacy indicators, and a StatusNotifier tray.
+Its layout and behavior are defined directly in the Rust source.
+
+The current system requires GTK 4, gtk4-layer-shell, Hyprland, PipeWire,
+WirePlumber, iwd, BlueZ, `jq`, `grim`, and JetBrains Mono Nerd Font. The bar's
+actions use `hyprctl`, `wpctl`, `iwctl`, `bluetoothctl`, `pw-dump`,
+`dot-cmd-notify`, `pavucontrol`, `impala`, `bluetui`, and `btop`.
+
 ## Development workflow
 
 Development happens in a nested Hyprland compositor rather than the live
@@ -26,7 +36,7 @@ stopped with Ctrl+Alt+Escape inside its window.
 Show the nested compositor when wanted:
 
 ```sh
-scripts/dev-show
+scripts/dev-show --focus
 ```
 
 Inspect its monitor, layer-surface, and window state without showing it:
@@ -47,7 +57,9 @@ The default screenshot path is `target/dev/screenshot.png`.
 The nested compositor has its own config, Hyprland instance signature,
 Wayland socket, and output. Inspection and screenshots target those nested
 identifiers. `HYPRLAND_NO_SD_VARS=1` prevents the test compositor from
-exporting its environment into the live user session.
+exporting its environment into the live user session. It also sets
+`SHELL_DEVELOPMENT=1` to show the module alignment guides; normal launches do
+not show them.
 
 Run the project checks with:
 

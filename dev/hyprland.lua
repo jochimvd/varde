@@ -18,6 +18,7 @@ hl.config({
         gaps_out = 0,
     },
     misc = {
+        background_color = "rgb(303545)",
         disable_hyprland_logo = true,
         disable_splash_rendering = true,
         disable_watchdog_warning = true,
@@ -26,6 +27,10 @@ hl.config({
 })
 
 hl.permission({ binary = "/usr/bin/grim", type = "screencopy", mode = "allow" })
+
+for workspace = 1, 5 do
+    hl.workspace_rule({ workspace = tostring(workspace), persistent = true })
+end
 
 hl.on("hyprland.start", function()
     local shell = os.getenv("SHELL_DEV_BINARY")

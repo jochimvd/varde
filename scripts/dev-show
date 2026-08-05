@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ ${1:-} != --focus ]]; then
+    printf 'dev-show changes the active workspace; rerun with --focus to confirm\n' >&2
+    exit 1
+fi
+
 runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
 session_file=$runtime_dir/session
 
@@ -18,4 +23,3 @@ fi
 
 hyprctl -i "$SHELL_DEV_HOST_INSTANCE" dispatch \
     "hl.dsp.focus({ workspace = 'name:shell-dev' })" >/dev/null
-
