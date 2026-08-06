@@ -158,3 +158,187 @@ tooltip {
     border: 1px solid @tertiary_color;
     border-radius: 8px;
 }
+
+window.launcher {
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    font-size: 18px;
+    color: @primary_color;
+    background: transparent;
+}
+
+.launcher-panel {
+    border-radius: 5px;
+    background: rgba(0, 0, 0, 0.85);
+}
+
+.launcher-input {
+    min-height: 44px;
+    padding: 0 10px;
+    border: none;
+    border-radius: 5px 5px 0 0;
+    color: @primary_color;
+    background: rgba(0, 0, 0, 0.35);
+    box-shadow: none;
+    caret-color: @primary_color;
+}
+
+.launcher-input:focus,
+.launcher-input:focus-within {
+    border: none;
+    outline: none;
+    box-shadow: none;
+}
+
+.launcher-input placeholder {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.launcher-results,
+.launcher-results row {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    color: @primary_color;
+    background: transparent;
+}
+
+.launcher-results row:selected,
+.launcher-results row:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.launcher-row {
+    min-height: 44px;
+    padding: 0 10px;
+}
+
+.launcher-message {
+    min-height: 44px;
+    padding: 0 10px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.launcher-message.error {
+    color: @critical_color;
+}
+
+window.launcher scrollbar {
+    opacity: 0;
+}
+
+window.notifications {
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    font-size: 14px;
+    color: @primary_color;
+    background: transparent;
+}
+
+.notification-center {
+    padding: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.9);
+}
+
+.notification-center-header {
+    min-height: 38px;
+    padding: 0 2px;
+}
+
+.notification-center-title {
+    font-size: 16px;
+    font-weight: bold;
+}
+
+.notification-center-control {
+    margin: 3px 0;
+    padding: 5px 10px;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.notification-center-control:hover,
+.notification-center-control.active {
+    color: @primary_color;
+    background: rgba(255, 255, 255, 0.16);
+}
+
+.notification-center-control.active {
+    color: @accent_color;
+}
+
+.notification-center-scroll {
+    padding: 0;
+}
+
+.notification-group {
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.055);
+}
+
+.notification-group-header {
+    min-height: 34px;
+    padding: 0 10px;
+    font-weight: bold;
+}
+
+.notification-group-toggle {
+    margin: 2px;
+    border-radius: 6px;
+}
+
+.notification-group-toggle:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.notification-group-disclosure {
+    min-width: 12px;
+    color: rgba(255, 255, 255, 0.55);
+}
+
+.notification-group-icon {
+    min-width: 20px;
+}
+
+.notification-group-count {
+    min-width: 18px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.notification-row {
+    padding: 8px 10px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.notification-row.critical {
+    border-left: 2px solid @critical_color;
+}
+
+.notification-summary {
+    font-weight: bold;
+}
+
+.notification-body {
+    margin-top: 2px;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+.notification-center-empty,
+.notification-center-unavailable {
+    min-height: 90px;
+    padding: 0 18px;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.notification-center-unavailable {
+    color: @critical_color;
+}
+
+window.notifications scrollbar {
+    opacity: 0;
+}

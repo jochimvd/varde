@@ -8,14 +8,20 @@ use modules::{connectivity, hyprland, services, system, tray};
 const HEIGHT: i32 = 32;
 const MODULE_GAP: i32 = 10;
 const TRAY_REVEAL_GAP: i32 = 10;
+const BAR_NAME: &str = "shell-bar";
 
-pub fn show(app: &gtk::Application) {
-    if !app.windows().is_empty() {
+pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notifications::Manager>) {
+    if app
+        .windows()
+        .iter()
+        .any(|window| window.widget_name() == BAR_NAME)
+    {
         return;
     }
 
     let window = gtk::ApplicationWindow::builder()
         .application(app)
+        .name(BAR_NAME)
         .default_height(HEIGHT)
         .height_request(HEIGHT)
         .build();
@@ -50,7 +56,7 @@ pub fn show(app: &gtk::Application) {
     right.append(&connectivity::network());
     right.append(&connectivity::audio());
     right.append(&system.right);
-    right.append(&connectivity::notification());
+    right.append(&notifications.button(app));
     right.append(&services.privacy);
 
     layout.attach(&left, 0, 0, 1, 1);

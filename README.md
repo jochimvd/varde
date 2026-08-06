@@ -7,10 +7,33 @@ date and time, Bluetooth, network and audio state, CPU and memory usage,
 notifications, idle inhibition, privacy indicators, and a StatusNotifier tray.
 Its layout and behavior are defined directly in the Rust source.
 
-The current system requires GTK 4, gtk4-layer-shell, Hyprland, PipeWire,
+Mako remains responsible for notification popups. The bell opens a compact
+notification center backed by Mako's active list and history. It can also be
+opened as an application action:
+
+```sh
+gapplication action be.jochim.shell notifications
+```
+
+The application launcher is exposed as a GTK application action, so the shell
+continues to run as one process:
+
+```sh
+gapplication action be.jochim.shell launcher
+```
+
+It lists visible desktop applications and supports fuzzy searching. The same
+window can also select newline-delimited input for shell scripts:
+
+```sh
+printf "Lock\nSuspend\nReboot\nShutdown\nLog Out" |
+  shell launcher --dmenu -p "System..."
+```
+
+The current system requires GTK 4, gtk4-layer-shell, Hyprland, Mako, PipeWire,
 WirePlumber, iwd, BlueZ, iproute2, PulseAudio utilities, coreutils, `jq`, `grim`,
 and JetBrains Mono Nerd Font. The bar's actions use `hyprctl`, `wpctl`, `pactl`,
-`ip`, `iwctl`, `bluetoothctl`, `pw-dump`, `pw-mon`, `stdbuf`, `dot-cmd-notify`,
+`ip`, `iwctl`, `bluetoothctl`, `pw-dump`, `makoctl`,
 `dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`, `btop`, and the
 terminal named by `$TERMINAL`.
 

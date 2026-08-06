@@ -123,7 +123,7 @@ fn time_tooltip() -> String {
     let rows = clocks
         .into_iter()
         .filter_map(|(name, zone)| {
-            let timezone = glib::TimeZone::new(Some(zone));
+            let timezone = glib::TimeZone::from_identifier(Some(zone))?;
             glib::DateTime::now(&timezone)
                 .ok()
                 .and_then(|time| time.format("%H:%M").ok())
