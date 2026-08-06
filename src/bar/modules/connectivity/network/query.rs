@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
+use super::super::command::{command, property, strip_ansi};
 use super::state::State;
-use crate::modules::connectivity::command::{command, property, strip_ansi};
 
 pub(super) fn state() -> State {
     let Some(route) = command("ip", &["-j", "route", "show", "default"])
