@@ -131,19 +131,25 @@ impl Manager {
         if self.launcher.borrow().is_none() {
             self.launcher.replace(Some(Launcher::new(app, self)));
         }
-        let mut launcher = self.launcher.borrow_mut();
-        let launcher = launcher.as_mut().expect("launcher was just constructed");
+
+        let mut launcher = self.launcher.take().expect("launcher was just constructed");
         launcher.configure(source, prompt, alphabetical, limit);
-        launcher.window.present();
-        launcher.entry.grab_focus();
+        let window = launcher.window.clone();
+        self.launcher.replace(Some(launcher));
+
+        window.present();
     }
 
     pub fn close(&self) {
-        if let Some(launcher) = self.launcher.borrow().as_ref() {
-            launcher.window.set_visible(false);
-        }
+        self.hide();
         if let Some(session) = self.dmenu.take() {
             session.main_loop.quit();
+        }
+    }
+
+    fn hide(&self) {
+        if let Some(launcher) = self.launcher.take() {
+            launcher.window.destroy();
         }
     }
 
@@ -209,9 +215,7 @@ impl Manager {
             Ok(Outcome::Return(value)) => {
                 if let Some(session) = self.dmenu.take() {
                     session.result.replace(Some(value));
-                    if let Some(launcher) = self.launcher.borrow().as_ref() {
-                        launcher.window.set_visible(false);
-                    }
+                    self.hide();
                     session.main_loop.quit();
                 }
             }
@@ -288,6 +292,15 @@ impl Launcher {
             .placeholder_text("Search")
             .build();
         entry.add_css_class("launcher-input");
+        window.connect_map({
+            let entry = entry.clone();
+            move |_| {
+                let entry = entry.clone();
+                glib::idle_add_local_once(move || {
+                    entry.grab_focus();
+                });
+            }
+        });
 
         let list = gtk::ListBox::builder()
             .activate_on_single_click(true)
