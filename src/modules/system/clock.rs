@@ -60,6 +60,13 @@ pub fn time() -> gtk::Label {
     });
     label.add_controller(click);
 
+    // Built on demand: the world clocks are only ever read while hovering.
+    label.set_has_tooltip(true);
+    label.connect_query_tooltip(|_, _, _, _, tooltip| {
+        tooltip.set_markup(Some(&time_tooltip()));
+        true
+    });
+
     label
 }
 
@@ -82,7 +89,6 @@ fn update_time(label: &gtk::Label, alternate: bool) {
         &now.format(if alternate { "%H:%M:%S (%Z)" } else { "%H:%M" })
             .expect("valid time format"),
     );
-    label.set_tooltip_markup(Some(&time_tooltip()));
 }
 
 fn format_date(date: &glib::DateTime, alternate: bool) -> String {

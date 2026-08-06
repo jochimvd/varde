@@ -11,8 +11,6 @@ pub struct SystemWidgets {
     pub right: gtk::Box,
 }
 
-pub type Widgets = SystemWidgets;
-
 pub fn widgets() -> SystemWidgets {
     let center = module_box();
     center.append(&clock::date());
@@ -26,6 +24,15 @@ pub fn widgets() -> SystemWidgets {
         right.append(&battery);
     }
     SystemWidgets { center, right }
+}
+
+/// Marks a reading that has crossed its warning threshold.
+fn set_critical(label: &gtk::Label, critical: bool) {
+    if critical {
+        label.add_css_class("critical");
+    } else {
+        label.remove_css_class("critical");
+    }
 }
 
 fn module_box() -> gtk::Box {

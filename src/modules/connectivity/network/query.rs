@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 use super::state::State;
-use crate::modules::connectivity::command::{command, strip_ansi};
+use crate::modules::connectivity::command::{command, property, strip_ansi};
 
 pub(super) fn state() -> State {
     let Some(route) = command("ip", &["-j", "route", "show", "default"])
@@ -20,6 +20,7 @@ pub(super) fn state() -> State {
 
     if let Some(station) = connected_station(&route.device) {
         return State::Wifi {
+            interface: route.device,
             network: station.network,
             frequency_mhz: station.frequency_mhz,
             signal: station.signal,
@@ -82,14 +83,6 @@ fn parse_wifi_station(text: &str) -> Option<WifiStation> {
         frequency_mhz,
         signal: rssi_to_percent(rssi),
     })
-}
-
-fn property(text: &str, name: &str) -> Option<String> {
-    text.lines()
-        .map(str::trim)
-        .find_map(|line| line.strip_prefix(name).map(str::trim))
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 #[derive(Deserialize)]

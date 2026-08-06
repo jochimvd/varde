@@ -15,6 +15,12 @@ The script builds `target/debug/shell`, launches a nested Hyprland window with
 `dev/hyprland.lua`, and starts the built binary inside it. Close the window or
 press Ctrl+Alt+Escape inside it to stop the session.
 
+Use `scripts/dev-session --release` to build and run the optimized binary for
+resource measurements. Add `--cairo` to run GTK without its Vulkan renderer.
+
+Inside the nested session, Ctrl+Q closes the active window and Ctrl+1 through
+Ctrl+9 switch workspaces.
+
 The nested compositor uses its own config, instance signature, Wayland socket,
 and output. `HYPRLAND_NO_SD_VARS=1` prevents it from exporting its environment
 to the live user session. The live compositor hosts a temporary 1280x720
@@ -23,7 +29,7 @@ focus or animation, so starting it does not switch workspaces, steal focus, or
 retile the current workspace. Show it only when wanted:
 
 ```sh
-scripts/dev-show
+scripts/dev-show --focus
 ```
 
 The test shell and inspection commands target the nested socket.

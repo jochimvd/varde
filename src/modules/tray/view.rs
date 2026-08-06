@@ -17,13 +17,18 @@ pub fn widget() -> gtk::Box {
     tray.add_css_class("tray");
 
     let (sender, receiver) = async_channel::unbounded();
-    background::spawn("tray-watcher", move || watcher::run(sender));
+    let shared = watcher::SharedConnection::default();
+    let watcher_connection = shared.clone();
+    background::spawn("tray-watcher", move || {
+        watcher::run(sender, watcher_connection)
+    });
     background::listen(receiver, {
         let tray = tray.clone();
+        let shared = shared.clone();
         let mut items = Vec::new();
         move |event| {
             apply_event(&mut items, event);
-            rebuild(&tray, &items);
+            rebuild(&tray, &items, &shared);
         }
     });
 
@@ -45,30 +50,69 @@ fn apply_event(items: &mut Vec<Item>, event: Event) {
     }
 }
 
-fn rebuild(tray: &gtk::Box, items: &[Item]) {
+fn rebuild(tray: &gtk::Box, items: &[Item], shared: &watcher::SharedConnection) {
     while let Some(child) = tray.first_child() {
         tray.remove(&child);
     }
     for item in items {
-        let button = gtk::Button::builder().focusable(false).build();
-        button.add_css_class("tray-icon");
-        button.set_tooltip_text(item.tooltip.as_deref());
-        button.set_child(Some(&icon(item)));
+        let target = gtk::Box::builder()
+            .focusable(false)
+            .valign(gtk::Align::Center)
+            .build();
+        target.add_css_class("tray-icon");
+        target.set_tooltip_text(item.tooltip.as_deref());
+        target.append(&icon(item));
 
         let id = item.id.clone();
+        let shared_click = shared.clone();
         let item_is_menu = item.item_is_menu;
         let click = gtk::GestureClick::new();
         click.set_button(0);
         click.connect_released(move |gesture, _, x, y| match gesture.current_button() {
-            1 if item_is_menu => {
-                watcher::call_item(&id, "ContextMenu", pointer_position(gesture, x, y))
-            }
-            1 => watcher::call_item(&id, "Activate", pointer_position(gesture, x, y)),
-            3 => watcher::call_item(&id, "ContextMenu", pointer_position(gesture, x, y)),
+            1 if item_is_menu => watcher::call_item(
+                &shared_click,
+                &id,
+                "ContextMenu",
+                pointer_position(gesture, x, y),
+            ),
+            1 => watcher::call_item(
+                &shared_click,
+                &id,
+                "Activate",
+                pointer_position(gesture, x, y),
+            ),
+            2 => watcher::call_item(
+                &shared_click,
+                &id,
+                "SecondaryActivate",
+                pointer_position(gesture, x, y),
+            ),
+            3 => watcher::call_item(
+                &shared_click,
+                &id,
+                "ContextMenu",
+                pointer_position(gesture, x, y),
+            ),
             _ => {}
         });
-        button.add_controller(click);
-        tray.append(&button);
+        target.add_controller(click);
+
+        let id = item.id.clone();
+        let shared_scroll = shared.clone();
+        let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+        scroll.connect_scroll(move |_, dx, dy| {
+            let (delta, orientation) = if dy.abs() >= dx.abs() {
+                ((-dy * 120.0).round() as i32, "vertical")
+            } else {
+                ((-dx * 120.0).round() as i32, "horizontal")
+            };
+            if delta != 0 {
+                watcher::call_scroll(&shared_scroll, &id, delta, orientation);
+            }
+            gtk::glib::Propagation::Stop
+        });
+        target.add_controller(scroll);
+        tray.append(&target);
     }
 }
 

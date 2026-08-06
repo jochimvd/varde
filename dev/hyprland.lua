@@ -28,10 +28,6 @@ hl.config({
 
 hl.permission({ binary = "/usr/bin/grim", type = "screencopy", mode = "allow" })
 
-for workspace = 1, 5 do
-    hl.workspace_rule({ workspace = tostring(workspace), persistent = true })
-end
-
 hl.on("hyprland.start", function()
     local shell = os.getenv("SHELL_DEV_BINARY")
     if shell then
@@ -40,3 +36,8 @@ hl.on("hyprland.start", function()
 end)
 
 hl.bind("CTRL + ALT + Escape", hl.dsp.exit())
+hl.bind("CTRL + Q", hl.dsp.window.close())
+
+for workspace = 1, 9 do
+    hl.bind("CTRL + " .. workspace, hl.dsp.focus({ workspace = workspace }))
+end

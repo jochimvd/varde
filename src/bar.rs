@@ -1,7 +1,7 @@
 use gtk::prelude::*;
 use gtk4_layer_shell::LayerShell;
 
-use crate::modules::{connectivity, hyprland::Hyprland, services, system, tray};
+use crate::modules::{connectivity, hyprland, services, system, tray};
 
 const HEIGHT: i32 = 32;
 const MODULE_GAP: i32 = 10;
@@ -38,8 +38,7 @@ pub fn show(app: &gtk::Application) {
     let right = region("right", gtk::Align::End);
     right.set_spacing(MODULE_GAP);
 
-    let hyprland = Hyprland::new();
-    left.append(hyprland.widget());
+    left.append(&hyprland::widget());
 
     let system = system::widgets();
     let services = services::widgets();

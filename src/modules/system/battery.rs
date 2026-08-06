@@ -5,6 +5,8 @@ use std::{
 
 use gtk::{glib, prelude::*};
 
+use super::set_critical;
+
 const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub fn widget() -> Option<gtk::Label> {
@@ -47,14 +49,6 @@ fn update(label: &gtk::Label, path: &Path) {
         label.add_css_class("charging");
     }
     set_critical(label, battery.capacity < 20 && battery.status != "Charging");
-}
-
-fn set_critical(label: &gtk::Label, critical: bool) {
-    if critical {
-        label.add_css_class("critical");
-    } else {
-        label.remove_css_class("critical");
-    }
 }
 
 struct Battery {

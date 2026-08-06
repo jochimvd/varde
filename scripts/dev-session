@@ -4,6 +4,26 @@ set -euo pipefail
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
 session_file=$runtime_dir/session
+profile=debug
+build_args=()
+renderer=
+
+while (( $# > 0 )); do
+    case $1 in
+        --release)
+            profile=release
+            build_args+=(--release)
+            ;;
+        --cairo)
+            renderer=cairo
+            ;;
+        *)
+            printf 'usage: %s [--release] [--cairo]\n' "$0" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
 
 for command in cargo Hyprland hyprctl jq; do
     command -v "$command" >/dev/null || {
@@ -28,11 +48,15 @@ if [[ -f $session_file ]]; then
     fi
 fi
 
-cargo build --manifest-path "$repo_dir/Cargo.toml"
+cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
 mkdir -p "$runtime_dir"
 
 known_instances=$(hyprctl -j instances)
-launch_command="env SHELL_DEVELOPMENT=1 SHELL_DEV_BINARY=$repo_dir/target/debug/shell HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 Hyprland --config $repo_dir/dev/hyprland.lua"
+renderer_env=
+if [[ -n $renderer ]]; then
+    renderer_env=" GSK_RENDERER=$renderer"
+fi
+launch_command="env SHELL_DEVELOPMENT=1 SHELL_DEV_BINARY=$repo_dir/target/$profile/shell$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 Hyprland --config $repo_dir/dev/hyprland.lua"
 hyprctl -i "$host_instance" eval \
     "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
 float = true, size = { 1280, 720 }, center = true, \
@@ -82,12 +106,14 @@ if [[ -z $output ]]; then
 fi
 
 umask 077
-printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\n' \
-    "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" >"$session_file"
+printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\nSHELL_DEV_PROFILE=%q\nSHELL_DEV_RENDERER=%q\n' \
+    "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" "$profile" "$renderer" >"$session_file"
 
 printf 'Nested Hyprland is ready.\n'
 printf '  instance: %s\n' "$instance"
 printf '  output:   %s (1280x720)\n' "$output"
+printf '  profile:  %s\n' "$profile"
+printf '  renderer: %s\n' "${renderer:-default}"
 printf '  show:     scripts/dev-show --focus\n'
 printf '  inspect:  scripts/dev-inspect\n'
 printf '  capture:  scripts/dev-screenshot\n'

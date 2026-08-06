@@ -29,7 +29,13 @@ impl ItemId {
     }
 
     pub fn from_registration(registration: &str) -> Option<Self> {
-        let (service, path) = registration.split_once('/')?;
+        let Some((service, path)) = registration.split_once('/') else {
+            // A watcher may list an item by bus name alone, as `parse` also accepts.
+            return (!registration.is_empty()).then(|| Self {
+                service: registration.into(),
+                path: ITEM_PATH.into(),
+            });
+        };
         let path = format!("/{path}");
         (!service.is_empty() && valid_path(&path)).then(|| Self {
             service: service.into(),
@@ -146,6 +152,25 @@ mod tests {
             })
         );
         assert_eq!(ItemId::parse("/not-valid/", ":1.42"), None);
+    }
+
+    #[test]
+    fn parses_registrations_with_and_without_an_object_path() {
+        assert_eq!(
+            ItemId::from_registration(":1.42/StatusNotifierItem"),
+            Some(ItemId {
+                service: ":1.42".into(),
+                path: "/StatusNotifierItem".into(),
+            })
+        );
+        assert_eq!(
+            ItemId::from_registration("org.kde.StatusNotifierItem-42-1"),
+            Some(ItemId {
+                service: "org.kde.StatusNotifierItem-42-1".into(),
+                path: ITEM_PATH.into(),
+            })
+        );
+        assert_eq!(ItemId::from_registration(""), None);
     }
 
     #[test]
