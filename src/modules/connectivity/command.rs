@@ -1,9 +1,23 @@
-use std::{cell::Cell, process::Command, rc::Rc, sync::Arc, time::Duration};
+use std::{
+    cell::Cell,
+    process::Command,
+    rc::Rc,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gtk::glib;
 use gtk::prelude::*;
 
 use crate::background;
+
+const REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+
+thread_local! {
+    /// Every refresh runs on a thread of its own, so its deadline can live there
+    /// and bound the whole refresh rather than each command it happens to run.
+    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+}
 
 #[derive(Clone)]
 pub(super) struct Refresh(async_channel::Sender<()>);
@@ -24,20 +38,49 @@ pub(super) fn module(name: &str) -> (gtk::Button, gtk::Label) {
     (button, label)
 }
 
-pub(super) fn set_state(button: &gtk::Button, state: &str) {
-    for class in ["disabled", "disconnected", "muted", "critical"] {
-        button.remove_css_class(class);
+/// Applies a module's current state as a CSS class, removing the previous one.
+pub(super) struct StateClass {
+    button: gtk::Button,
+    current: String,
+}
+
+impl StateClass {
+    pub(super) fn new(button: &gtk::Button) -> Self {
+        Self {
+            button: button.clone(),
+            current: String::new(),
+        }
     }
-    if !state.is_empty() {
-        button.add_css_class(state);
+
+    pub(super) fn set(&mut self, state: &str) {
+        if state == self.current {
+            return;
+        }
+        if !self.current.is_empty() {
+            self.button.remove_css_class(&self.current);
+        }
+        if !state.is_empty() {
+            self.button.add_css_class(state);
+        }
+        self.current = state.into();
     }
 }
 
 pub(super) fn on_click(button: &gtk::Button, action: impl Fn(u32) + 'static) {
-    let gesture = gtk::GestureClick::new();
-    gesture.set_button(0);
-    gesture.connect_released(move |gesture, _, _, _| action(gesture.current_button()));
-    button.add_controller(gesture);
+    let action: Rc<dyn Fn(u32)> = Rc::new(action);
+    button.connect_clicked({
+        let action = Rc::clone(&action);
+        move |_| action(1)
+    });
+    for mouse_button in [2, 3] {
+        let gesture = gtk::GestureClick::new();
+        gesture.set_button(mouse_button);
+        gesture.connect_released({
+            let action = Rc::clone(&action);
+            move |_, _, _, _| action(mouse_button)
+        });
+        button.add_controller(gesture);
+    }
 }
 
 pub(super) fn watch<T, Fetch, Update>(
@@ -60,12 +103,14 @@ where
         let result_sender = result_sender.clone();
         let running = Rc::clone(&running);
         move || {
-            running.set(true);
             let fetch = Arc::clone(&fetch);
             let result_sender = result_sender.clone();
-            background::spawn("module-refresh", move || {
+            // A failed spawn never reports back, so only mark the module busy once it started.
+            let started = background::spawn("module-refresh", move || {
+                DEADLINE.set(Some(Instant::now() + REFRESH_TIMEOUT));
                 let _ = result_sender.send_blocking(fetch());
             });
+            running.set(started);
         }
     });
 
@@ -120,11 +165,27 @@ pub(super) fn spawn_shell_then_refresh(command: &str, refresh: Refresh) {
 }
 
 pub(super) fn command(program: &str, args: &[&str]) -> Option<String> {
-    let output = Command::new(program).args(args).output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| strip_ansi(&String::from_utf8_lossy(&output.stdout)))
+    let output = background::command_output(program, args, remaining_time()?)?;
+    Some(strip_ansi(&String::from_utf8_lossy(&output)))
+}
+
+/// What is left of the current refresh's budget, or `None` once it is spent.
+fn remaining_time() -> Option<Duration> {
+    let Some(deadline) = DEADLINE.get() else {
+        return Some(REFRESH_TIMEOUT);
+    };
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|left| !left.is_zero())
+}
+
+/// Reads `name`'s value out of the line-per-property output these tools print.
+pub(super) fn property(text: &str, name: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find_map(|line| line.strip_prefix(name).map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 pub(super) fn strip_ansi(text: &str) -> String {

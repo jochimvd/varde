@@ -1,15 +1,10 @@
-use std::{
-    io::{BufRead, BufReader},
-    os::unix::process::CommandExt,
-    process::{Command, Stdio},
-    time::Duration,
-};
+use std::time::Duration;
 
 use gtk::glib;
 use gtk::prelude::*;
 
 use super::command::{
-    Refresh, command, module, on_click, set_state, spawn_shell, spawn_shell_then_refresh, watch,
+    Refresh, StateClass, command, module, on_click, spawn_shell, spawn_shell_then_refresh, watch,
 };
 use crate::background;
 
@@ -18,8 +13,9 @@ const INTERVAL: Duration = Duration::from_secs(30);
 pub fn audio() -> gtk::Button {
     let (button, label) = module("audio");
     let widget = button.clone();
+    let mut class = StateClass::new(&button);
     let refresh = watch(INTERVAL, state, move |state| {
-        set_state(&widget, if state.muted { "muted" } else { "" });
+        class.set(if state.muted { "muted" } else { "" });
         label.set_text(state.text());
         widget.set_tooltip_text(Some(&format!("Volume: {}%", state.percent())));
     });
@@ -44,35 +40,9 @@ pub fn audio() -> gtk::Button {
 }
 
 fn subscribe(refresh: Refresh) {
-    background::spawn("audio-events", move || {
-        loop {
-            let mut command = Command::new("pactl");
-            command.arg("subscribe").stdout(Stdio::piped());
-            // The subscriber must not outlive the shell when the compositor stops it.
-            unsafe {
-                command.pre_exec(|| {
-                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) == -1 {
-                        Err(std::io::Error::last_os_error())
-                    } else {
-                        Ok(())
-                    }
-                });
-            }
-            let Some(mut child) = command.spawn().ok() else {
-                std::thread::sleep(Duration::from_secs(1));
-                continue;
-            };
-            let Some(output) = child.stdout.take() else {
-                let _ = child.kill();
-                continue;
-            };
-            for event in BufReader::new(output).lines().map_while(Result::ok) {
-                if event.contains(" on sink ") || event.contains(" on server ") {
-                    refresh.request();
-                }
-            }
-            let _ = child.wait();
-            std::thread::sleep(Duration::from_secs(1));
+    background::watch_lines("audio-events", "pactl", &["subscribe"], move |event| {
+        if event.contains(" on sink ") || event.contains(" on server ") {
+            refresh.request();
         }
     });
 }

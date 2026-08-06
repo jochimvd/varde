@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use gtk::prelude::*;
 
-use super::command::{command, module, on_click, set_state, spawn_shell, strip_ansi, watch};
+use super::command::{
+    StateClass, command, module, on_click, property, spawn_shell, strip_ansi, watch,
+};
 
 const INTERVAL: Duration = Duration::from_secs(5);
 
@@ -17,8 +19,9 @@ pub fn bluetooth() -> gtk::Button {
     });
 
     let widget = button.clone();
+    let mut class = StateClass::new(&button);
     watch(INTERVAL, state, move |state| {
-        set_state(&widget, &state.class());
+        class.set(state.class());
         label.set_text(state.icon());
         widget.set_tooltip_text(Some(&state.tooltip()));
         widget.set_visible(!matches!(state, State::NoController));
@@ -62,10 +65,10 @@ impl State {
         }
     }
 
-    fn class(&self) -> String {
+    fn class(&self) -> &'static str {
         match self {
-            Self::Disabled { .. } => "disabled".into(),
-            _ => String::new(),
+            Self::Disabled { .. } => "disabled",
+            _ => "",
         }
     }
 
@@ -160,14 +163,6 @@ fn parse_battery(text: &str) -> Option<u8> {
         .or_else(|| battery.split_whitespace().next())?
         .parse()
         .ok()
-}
-
-fn property(text: &str, name: &str) -> Option<String> {
-    text.lines()
-        .map(str::trim)
-        .find_map(|line| line.strip_prefix(name).map(str::trim))
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 #[cfg(test)]

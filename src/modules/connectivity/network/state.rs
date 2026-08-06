@@ -1,7 +1,8 @@
 use std::time::Instant;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct TrafficSample {
+    interface: String,
     received: u64,
     sent: u64,
     at: Instant,
@@ -10,6 +11,7 @@ pub(super) struct TrafficSample {
 pub(super) enum State {
     Disconnected,
     Wifi {
+        interface: String,
         network: String,
         frequency_mhz: u32,
         signal: u8,
@@ -41,10 +43,11 @@ impl State {
         }
     }
 
-    pub(super) fn tooltip(&self, previous: Option<TrafficSample>) -> String {
+    pub(super) fn tooltip(&self, previous: Option<&TrafficSample>) -> String {
         match self {
             Self::Disconnected => "Disconnected".into(),
             Self::Wifi {
+                interface,
                 network,
                 frequency_mhz,
                 signal,
@@ -54,7 +57,7 @@ impl State {
             } => format!(
                 "󰣸  {network} ({} GHz, {signal}%)\n󰛳  {address}\n{}",
                 *frequency_mhz as f32 / 1000.0,
-                traffic(*received, *sent, previous)
+                traffic(interface, *received, *sent, previous)
             ),
             Self::Ethernet {
                 interface,
@@ -63,20 +66,30 @@ impl State {
                 sent,
             } => format!(
                 "  {interface}\n󰛳  {address}\n{}",
-                traffic(*received, *sent, previous)
+                traffic(interface, *received, *sent, previous)
             ),
         }
     }
 
     pub(super) fn traffic_sample(&self) -> Option<TrafficSample> {
         match self {
-            Self::Wifi { received, sent, .. } | Self::Ethernet { received, sent, .. } => {
-                Some(TrafficSample {
-                    received: *received,
-                    sent: *sent,
-                    at: Instant::now(),
-                })
+            Self::Wifi {
+                interface,
+                received,
+                sent,
+                ..
             }
+            | Self::Ethernet {
+                interface,
+                received,
+                sent,
+                ..
+            } => Some(TrafficSample {
+                interface: interface.clone(),
+                received: *received,
+                sent: *sent,
+                at: Instant::now(),
+            }),
             Self::Disconnected => None,
         }
     }
@@ -92,10 +105,13 @@ fn wifi_icon(signal: u8) -> &'static str {
     }
 }
 
-fn traffic(received: u64, sent: u64, previous: Option<TrafficSample>) -> String {
+fn traffic(interface: &str, received: u64, sent: u64, previous: Option<&TrafficSample>) -> String {
     let Some(previous) = previous else {
         return "  —     —".into();
     };
+    if previous.interface != interface {
+        return "  —     —".into();
+    }
     let seconds = previous.at.elapsed().as_secs_f64();
     let sent = sent.saturating_sub(previous.sent) as f64 / seconds;
     let received = received.saturating_sub(previous.received) as f64 / seconds;
@@ -118,5 +134,24 @@ fn format_bytes(bytes: f64) -> String {
         format!("{value:.0} {}", UNITS[unit])
     } else {
         format!("{value:.1} {}", UNITS[unit])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn does_not_compare_traffic_across_interfaces() {
+        let previous = TrafficSample {
+            interface: "wlan0".into(),
+            received: 1,
+            sent: 1,
+            at: Instant::now(),
+        };
+        assert_eq!(
+            traffic("eth0", 10_000, 10_000, Some(&previous)),
+            "  —     —"
+        );
     }
 }

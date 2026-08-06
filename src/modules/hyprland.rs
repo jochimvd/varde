@@ -14,50 +14,37 @@ use serde::de::DeserializeOwned;
 
 use crate::background;
 
-pub struct Hyprland {
-    root: gtk::Box,
-}
+const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 
-impl Default for Hyprland {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+pub fn widget() -> gtk::Box {
+    let root = gtk::Box::builder()
+        .spacing(0)
+        .valign(gtk::Align::Center)
+        .build();
 
-impl Hyprland {
-    pub fn new() -> Self {
-        let root = gtk::Box::builder()
-            .spacing(0)
-            .valign(gtk::Align::Center)
-            .build();
+    let workspaces = gtk::Box::builder()
+        .spacing(0)
+        .valign(gtk::Align::Center)
+        .build();
+    workspaces.add_css_class("workspaces");
 
-        let workspaces = gtk::Box::builder()
-            .spacing(0)
-            .valign(gtk::Align::Center)
-            .build();
-        workspaces.add_css_class("workspaces");
+    let window = gtk::Label::new(None);
+    window.add_css_class("window");
+    window.set_xalign(0.0);
 
-        let window = gtk::Label::new(None);
-        window.add_css_class("window");
-        window.set_xalign(0.0);
+    root.append(&workspaces);
+    root.append(&window);
 
-        root.append(&workspaces);
-        root.append(&window);
+    let (updates_tx, updates_rx) = async_channel::unbounded();
+    let (commands_tx, commands_rx) = mpsc::channel();
+    background::spawn("hyprland-events", move || {
+        run_worker(updates_tx, commands_rx)
+    });
+    background::listen(updates_rx, move |state| {
+        render(&workspaces, &window, &state, &commands_tx);
+    });
 
-        let (updates_tx, updates_rx) = async_channel::unbounded();
-        let (commands_tx, commands_rx) = mpsc::channel();
-        start_worker(updates_tx, commands_rx);
-
-        background::listen(updates_rx, move |state| {
-            render(&workspaces, &window, &state, &commands_tx);
-        });
-
-        Self { root }
-    }
-
-    pub fn widget(&self) -> &gtk::Box {
-        &self.root
-    }
+    root
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -134,26 +121,25 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &
     window.set_label(&state.title);
 }
 
-fn start_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>) {
-    background::spawn("hyprland-events", move || run_worker(updates, commands));
-}
-
 fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>) {
     loop {
         refresh(&updates);
 
         let Ok((request_socket, event_socket)) = socket_paths() else {
-            std::thread::sleep(Duration::from_secs(1));
+            std::thread::sleep(background::RETRY_DELAY);
             continue;
         };
 
         let Ok(stream) = UnixStream::connect(event_socket) else {
-            std::thread::sleep(Duration::from_secs(1));
+            std::thread::sleep(background::RETRY_DELAY);
             continue;
         };
         let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
         let mut events = BufReader::new(stream);
 
+        // The read timeout can cut a line in half, so the partial event is kept
+        // across reads instead of being handled as an event of its own.
+        let mut line = Vec::new();
         loop {
             while let Ok(command) = commands.try_recv() {
                 match command {
@@ -163,17 +149,24 @@ fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>
                 }
             }
 
-            let mut line = String::new();
-            match events.read_line(&mut line) {
+            match events.read_until(b'\n', &mut line) {
                 Ok(0) => break,
-                Ok(_) if event_needs_refresh(&line) => refresh(&updates),
-                Ok(_) => {}
+                Ok(_) => {
+                    if line.ends_with(b"\n") {
+                        if event_needs_refresh(&String::from_utf8_lossy(&line)) {
+                            refresh(&updates);
+                        }
+                        line.clear();
+                    }
+                }
                 Err(error)
                     if error.kind() == io::ErrorKind::WouldBlock
                         || error.kind() == io::ErrorKind::TimedOut => {}
                 Err(_) => break,
             }
         }
+
+        std::thread::sleep(background::RETRY_DELAY);
     }
 }
 
@@ -224,6 +217,8 @@ fn request_json<T: DeserializeOwned>(socket: &Path, command: &str) -> io::Result
 
 fn request(socket: &Path, command: &str) -> io::Result<String> {
     let mut stream = UnixStream::connect(socket)?;
+    stream.set_read_timeout(Some(IPC_TIMEOUT))?;
+    stream.set_write_timeout(Some(IPC_TIMEOUT))?;
     stream.write_all(command.as_bytes())?;
     stream.shutdown(std::net::Shutdown::Write)?;
 

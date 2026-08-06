@@ -1,7 +1,7 @@
-use std::{cell::RefCell, rc::Rc};
-
 use gtk::prelude::*;
 use zbus::blocking::{Connection, Proxy};
+
+use crate::background;
 
 pub fn widget() -> gtk::Button {
     let button = gtk::Button::builder().focusable(false).build();
@@ -9,20 +9,33 @@ pub fn widget() -> gtk::Button {
     button.add_css_class("module");
     button.add_css_class("idle-inhibitor");
     button.set_child(Some(&gtk::Label::new(Some("󰇘"))));
-
-    let state = Rc::new(RefCell::new(IdleInhibitor::default()));
     update(&button, false, None);
-    button.connect_clicked({
+
+    let (toggles, requests) = async_channel::unbounded();
+    let (results, updates) = async_channel::unbounded();
+    background::listen(updates, {
         let button = button.clone();
-        move |_| {
-            let mut state = state.borrow_mut();
+        move |(active, error)| update(&button, active, error)
+    });
+    // The screensaver owner may be slow to activate, so never toggle on the main thread.
+    background::spawn("idle-inhibitor", move || {
+        let mut state = IdleInhibitor::default();
+        while requests.recv_blocking().is_ok() {
             let result = if state.cookie.is_some() {
                 state.deactivate()
             } else {
                 state.activate()
             };
-            update(&button, state.cookie.is_some(), result.err());
+            if results
+                .send_blocking((state.cookie.is_some(), result.err()))
+                .is_err()
+            {
+                break;
+            }
         }
+    });
+    button.connect_clicked(move |_| {
+        let _ = toggles.try_send(());
     });
 
     button
@@ -52,21 +65,16 @@ impl IdleInhibitor {
     }
 
     fn deactivate(&mut self) -> Result<(), String> {
-        let Some(cookie) = self.cookie else {
+        let Some(cookie) = self.cookie.take() else {
             return Ok(());
         };
-        let Some(connection) = self.connection.as_ref() else {
-            self.cookie = None;
+        let Some(connection) = self.connection.take() else {
             return Ok(());
         };
-        {
-            let proxy = screensaver_proxy(connection)?;
-            let _: () = proxy
-                .call("UnInhibit", &(cookie,))
-                .map_err(|error| error.to_string())?;
-        }
-        self.cookie = None;
-        self.connection = None;
+        let proxy = screensaver_proxy(&connection)?;
+        let _: () = proxy
+            .call("UnInhibit", &(cookie,))
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }

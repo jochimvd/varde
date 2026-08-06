@@ -141,11 +141,6 @@ button {
     color: @tertiary_color;
 }
 
-.bluetooth.discoverable,
-.bluetooth.discovering {
-    animation: blink-accent 2s steps(2) infinite;
-}
-
 .cpu.critical,
 .memory.critical,
 .battery.critical:not(.charging) {

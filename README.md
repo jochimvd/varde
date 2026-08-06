@@ -8,9 +8,11 @@ notifications, idle inhibition, privacy indicators, and a StatusNotifier tray.
 Its layout and behavior are defined directly in the Rust source.
 
 The current system requires GTK 4, gtk4-layer-shell, Hyprland, PipeWire,
-WirePlumber, iwd, BlueZ, `jq`, `grim`, and JetBrains Mono Nerd Font. The bar's
-actions use `hyprctl`, `wpctl`, `iwctl`, `bluetoothctl`, `pw-dump`,
-`dot-cmd-notify`, `pavucontrol`, `impala`, `bluetui`, and `btop`.
+WirePlumber, iwd, BlueZ, iproute2, PulseAudio utilities, coreutils, `jq`, `grim`,
+and JetBrains Mono Nerd Font. The bar's actions use `hyprctl`, `wpctl`, `pactl`,
+`ip`, `iwctl`, `bluetoothctl`, `pw-dump`, `pw-mon`, `stdbuf`, `dot-cmd-notify`,
+`dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`, `btop`, and the
+terminal named by `$TERMINAL`.
 
 ## Development workflow
 

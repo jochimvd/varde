@@ -2,6 +2,9 @@ use std::{cell::Cell, fs, process::Command, rc::Rc};
 
 use gtk::{glib, prelude::*};
 
+use super::set_critical;
+use crate::background;
+
 const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub fn cpu() -> gtk::Label {
@@ -102,23 +105,17 @@ fn update_memory(label: &gtk::Label) {
     }
 }
 
-fn set_critical(label: &gtk::Label, critical: bool) {
-    if critical {
-        label.add_css_class("critical");
-    } else {
-        label.remove_css_class("critical");
-    }
-}
-
 fn launch_btop_on_click(label: &gtk::Label) {
     let click = gtk::GestureClick::new();
     click.connect_released(|_, _, _, _| {
-        let _ = Command::new("hyprctl")
-            .args([
-                "dispatch",
-                r#"hl.dsp.exec_cmd("$TERMINAL -e btop", { tag = "+floating-window" })"#,
-            ])
-            .spawn();
+        background::spawn("btop-launch", || {
+            let _ = Command::new("hyprctl")
+                .args([
+                    "dispatch",
+                    r#"hl.dsp.exec_cmd("$TERMINAL -e btop", { tag = "+floating-window" })"#,
+                ])
+                .status();
+        });
     });
     label.add_controller(click);
 }
@@ -171,13 +168,16 @@ fn read_memory() -> Option<Memory> {
 }
 
 fn parse_memory(meminfo: &str) -> Option<Memory> {
-    let mut total = None;
-    let mut available = None;
+    let mut total = None::<u64>;
+    let mut available = None::<u64>;
     for line in meminfo.lines() {
         let mut fields = line.split_whitespace();
-        match fields.next()? {
-            "MemTotal:" => total = fields.next()?.parse::<u64>().ok(),
-            "MemAvailable:" => available = fields.next()?.parse::<u64>().ok(),
+        let Some(key) = fields.next() else {
+            continue;
+        };
+        match key {
+            "MemTotal:" => total = fields.next().and_then(|value| value.parse().ok()),
+            "MemAvailable:" => available = fields.next().and_then(|value| value.parse().ok()),
             _ => {}
         }
     }
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn parses_memory_using_available_memory() {
-        let memory = parse_memory("MemTotal:       1000 kB\nMemAvailable:    250 kB\n").unwrap();
+        let memory = parse_memory("MemTotal:       1000 kB\n\nMemAvailable:    250 kB\n").unwrap();
         assert_eq!(memory.used, 750);
         assert_eq!(memory.percentage, 75);
     }
