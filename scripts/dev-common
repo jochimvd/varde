@@ -1,0 +1,32 @@
+shell_dev_select_session() {
+    local session=$1
+
+    if [[ ! $session =~ ^[a-z][a-z0-9-]{0,31}$ ]]; then
+        printf 'invalid session ID: %s (expected [a-z][a-z0-9-]{0,31})\n' "$session" >&2
+        exit 1
+    fi
+
+    SHELL_DEV_SESSION_ID=$session
+    SHELL_DEV_RUNTIME_DIR=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev/$session
+    SHELL_DEV_SESSION_FILE=$SHELL_DEV_RUNTIME_DIR/session
+}
+
+shell_dev_load_session() {
+    if [[ ! -f $SHELL_DEV_SESSION_FILE ]]; then
+        printf 'no shell dev session %s is running; start scripts/dev-session --session %s first\n' \
+            "$SHELL_DEV_SESSION_ID" "$SHELL_DEV_SESSION_ID" >&2
+        exit 1
+    fi
+
+    # shellcheck disable=SC1090
+    source "$SHELL_DEV_SESSION_FILE"
+    if ! kill -0 "$SHELL_DEV_PID" 2>/dev/null ||
+        ! hyprctl -j instances | jq -e \
+            --arg instance "$SHELL_DEV_INSTANCE" \
+            --argjson pid "$SHELL_DEV_PID" \
+            '.[] | select(.instance == $instance and .pid == $pid)' >/dev/null; then
+        printf 'the recorded shell dev session %s is no longer running\n' \
+            "$SHELL_DEV_SESSION_ID" >&2
+        exit 1
+    fi
+}

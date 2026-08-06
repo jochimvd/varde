@@ -1,25 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ${1:-} != --focus ]]; then
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+session=default
+focus=false
+while (( $# > 0 )); do
+    case $1 in
+        --focus)
+            focus=true
+            ;;
+        --session)
+            if (( $# < 2 )); then
+                printf 'missing value for --session\n' >&2
+                exit 1
+            fi
+            session=$2
+            shift
+            ;;
+        *)
+            printf 'usage: %s [--session ID] --focus\n' "$0" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+if [[ $focus != true ]]; then
     printf 'dev-show changes the active workspace; rerun with --focus to confirm\n' >&2
     exit 1
 fi
 
-runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
-session_file=$runtime_dir/session
-
-if [[ ! -f $session_file ]]; then
-    printf 'no shell dev session is running; start scripts/dev-session first\n' >&2
-    exit 1
-fi
-
-# shellcheck disable=SC1090
-source "$session_file"
-if ! kill -0 "$SHELL_DEV_PID" 2>/dev/null; then
-    printf 'the recorded shell dev session is no longer running\n' >&2
-    exit 1
-fi
+shell_dev_select_session "$session"
+shell_dev_load_session
 
 hyprctl -i "$SHELL_DEV_HOST_INSTANCE" dispatch \
-    "hl.dsp.focus({ workspace = 'name:shell-dev' })" >/dev/null
+    "hl.dsp.focus({ workspace = 'name:$SHELL_DEV_HOST_WORKSPACE' })" >/dev/null

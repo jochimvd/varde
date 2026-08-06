@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pid_file=$1
+work_dir=$2
+shift 2
+pid_tmp="$pid_file.$$"
+
+cleanup() {
+    rm -f -- "$pid_tmp"
+}
+trap cleanup EXIT
+
+umask 077
+mkdir -p "$work_dir"
+cd "$work_dir"
+printf '%s\n' "$$" >"$pid_tmp"
+mv -- "$pid_tmp" "$pid_file"
+exec Hyprland "$@"
