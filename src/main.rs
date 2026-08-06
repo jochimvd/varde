@@ -1,6 +1,5 @@
 mod background;
 mod bar;
-pub mod modules;
 
 use gtk::prelude::*;
 

@@ -1,7 +1,9 @@
 use gtk::prelude::*;
 use gtk4_layer_shell::LayerShell;
 
-use crate::modules::{connectivity, hyprland, services, system, tray};
+mod modules;
+
+use modules::{connectivity, hyprland, services, system, tray};
 
 const HEIGHT: i32 = 32;
 const MODULE_GAP: i32 = 10;
