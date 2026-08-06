@@ -34,7 +34,37 @@ scripts/dev-show --focus
 
 The test shell and inspection commands target the nested socket.
 Session metadata is kept in
-`$XDG_RUNTIME_DIR/shell-dev/session` and removed on exit.
+`$XDG_RUNTIME_DIR/shell-dev/default/session` and removed on exit.
+
+## Concurrent agent sessions
+
+Use a separate Git worktree and a unique session ID for each agent. Pass that
+ID to every development command:
+
+```sh
+scripts/dev-session --session agent-1
+scripts/dev-inspect --session agent-1
+scripts/dev-screenshot --session agent-1
+scripts/dev-show --session agent-1 --focus
+```
+
+Session IDs start with a lowercase letter, contain only lowercase letters,
+digits, and hyphens, and are at most 32 characters long. Omitting `--session`
+uses `default`, which is reserved for manual development. Automated agents must
+always pass their unique session ID explicitly to every development command.
+
+Each session has its own runtime metadata and lock, Wayland socket,
+Hyprland instance, `shell-dev-<session>` host workspace, GTK application ID,
+working directory at `$XDG_RUNTIME_DIR/shell-dev/<session>/work`, and default
+screenshot at `target/dev/<session>/screenshot.png`. The compositor, shell, and
+applications launched from it inherit that working directory, preventing
+relative application paths from writing into the Git worktree. Two processes
+cannot use the same session ID concurrently.
+
+The nested sessions share the live user D-Bus and host services so the tray,
+Mako notifications, idle inhibition, audio, network, and Bluetooth remain
+available. Interacting with those modules can therefore affect the live
+desktop.
 
 ## Inspect and capture
 
@@ -52,8 +82,8 @@ scripts/dev-screenshot
 scripts/dev-screenshot target/dev/another-name.png
 ```
 
-The default image is `target/dev/screenshot.png`. `grim` is explicitly granted
-the nested session's `screencopy` permission.
+The default session image is `target/dev/default/screenshot.png`. `grim` is
+explicitly granted the nested session's `screencopy` permission.
 
 ## Checks
 

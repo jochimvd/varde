@@ -77,14 +77,35 @@ scripts/dev-screenshot
 scripts/dev-screenshot target/dev/another-name.png
 ```
 
-The default screenshot path is `target/dev/screenshot.png`.
+The default session screenshot path is `target/dev/default/screenshot.png`.
+
+Multiple sessions can run at once. Give each agent a separate Git worktree and
+use the same unique session ID with every development command:
+
+```sh
+scripts/dev-session --session agent-1
+scripts/dev-inspect --session agent-1
+scripts/dev-screenshot --session agent-1
+scripts/dev-show --session agent-1 --focus
+```
+
+Named sessions keep their metadata, Wayland socket, host workspace, GTK
+application ID, working directory, and default screenshot separate. Their
+working directory is `$XDG_RUNTIME_DIR/shell-dev/<session>/work`, so
+applications with relative paths cannot write into the Git worktree. Their
+screenshots default to `target/dev/<session>/screenshot.png`. Omitting
+`--session` selects the single-instance `default` session, which is reserved
+for manual development. Automated agents must always pass their unique session
+ID explicitly.
 
 The nested compositor has its own config, Hyprland instance signature,
 Wayland socket, and output. Inspection and screenshots target those nested
 identifiers. `HYPRLAND_NO_SD_VARS=1` prevents the test compositor from
 exporting its environment into the live user session. It also sets
 `SHELL_DEVELOPMENT=1` to show the module alignment guides; normal launches do
-not show them.
+not show them. The sessions intentionally retain access to the live user D-Bus
+and system services, so notification, tray, idle, audio, network, and Bluetooth
+interactions can affect the live desktop.
 
 Run the project checks with:
 

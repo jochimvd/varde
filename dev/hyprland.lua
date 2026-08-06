@@ -37,7 +37,8 @@ end)
 
 hl.bind("CTRL + ALT + Escape", hl.dsp.exit())
 hl.bind("CTRL + Q", hl.dsp.window.close())
-hl.bind("CTRL + SPACE", hl.dsp.exec_cmd("gapplication action be.jochim.shell launcher"))
+local app_id = os.getenv("SHELL_DEV_APP_ID") or "be.jochim.shell"
+hl.bind("CTRL + SPACE", hl.dsp.exec_cmd("gapplication action " .. app_id .. " launcher"))
 
 for workspace = 1, 9 do
     hl.bind("CTRL + " .. workspace, hl.dsp.focus({ workspace = workspace }))

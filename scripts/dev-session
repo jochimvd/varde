@@ -2,8 +2,10 @@
 set -euo pipefail
 
 repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-runtime_dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/shell-dev
-session_file=$runtime_dir/session
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+session=default
 profile=debug
 build_args=()
 renderer=
@@ -17,15 +19,25 @@ while (( $# > 0 )); do
         --cairo)
             renderer=cairo
             ;;
+        --session)
+            if (( $# < 2 )); then
+                printf 'missing value for --session\n' >&2
+                exit 1
+            fi
+            session=$2
+            shift
+            ;;
         *)
-            printf 'usage: %s [--release] [--cairo]\n' "$0" >&2
+            printf 'usage: %s [--session ID] [--release] [--cairo]\n' "$0" >&2
             exit 1
             ;;
     esac
     shift
 done
 
-for command in cargo Hyprland hyprctl jq; do
+shell_dev_select_session "$session"
+
+for command in cargo flock Hyprland hyprctl jq; do
     command -v "$command" >/dev/null || {
         printf 'missing required command: %s\n' "$command" >&2
         exit 1
@@ -39,47 +51,60 @@ fi
 
 host_instance=${HYPRLAND_INSTANCE_SIGNATURE:?dev-session must be started from Hyprland}
 
-if [[ -f $session_file ]]; then
-    # shellcheck disable=SC1090
-    source "$session_file"
-    if kill -0 "$SHELL_DEV_PID" 2>/dev/null; then
-        printf 'a shell dev session is already running (pid %s)\n' "$SHELL_DEV_PID" >&2
-        exit 1
-    fi
+mkdir -p "$SHELL_DEV_RUNTIME_DIR"
+exec {lock_fd}>"$SHELL_DEV_RUNTIME_DIR/lock"
+if ! flock -n "$lock_fd"; then
+    printf 'shell dev session %s is already running\n' "$session" >&2
+    exit 1
 fi
+rm -f -- "$SHELL_DEV_SESSION_FILE"
 
 cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
-mkdir -p "$runtime_dir"
 
-known_instances=$(hyprctl -j instances)
 renderer_env=
 if [[ -n $renderer ]]; then
     renderer_env=" GSK_RENDERER=$renderer"
 fi
-launch_command="env SHELL_DEVELOPMENT=1 SHELL_DEV_BINARY=$repo_dir/target/$profile/shell$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 Hyprland --config $repo_dir/dev/hyprland.lua"
+application_id="be.jochim.shell.Development.${session//-/_}"
+host_workspace="shell-dev-$session"
+launcher_pid_file="$SHELL_DEV_RUNTIME_DIR/compositor-pid"
+work_dir="$SHELL_DEV_RUNTIME_DIR/work"
+rm -f -- "$launcher_pid_file"
+launch_command="env SHELL_DEVELOPMENT=1 SHELL_DEV_APP_ID=$application_id SHELL_DEV_BINARY=$repo_dir/target/$profile/shell$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
 hyprctl -i "$host_instance" eval \
     "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
 float = true, size = { 1280, 720 }, center = true, \
-workspace = 'name:shell-dev silent', no_initial_focus = true, \
+workspace = 'name:$host_workspace silent', no_initial_focus = true, \
 no_anim = true, render_unfocused = true }))" >/dev/null
 
 compositor_pid=
+metadata_tmp="$SHELL_DEV_SESSION_FILE.$$"
 
 cleanup() {
     if [[ -n $compositor_pid ]] && kill -0 "$compositor_pid" 2>/dev/null; then
         kill "$compositor_pid"
     fi
-    rm -f -- "$session_file"
+    rm -f -- "$launcher_pid_file" "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 instance=
 for _ in {1..100}; do
-    new_instance=$(hyprctl -j instances | jq -c --argjson known "$known_instances" \
-        '.[] | select(.instance as $candidate | ($known | map(.instance) | index($candidate) | not))' | head -n 1)
+    if [[ ! -f $launcher_pid_file ]]; then
+        sleep 0.05
+        continue
+    fi
+    compositor_pid=$(<"$launcher_pid_file")
+    if [[ ! $compositor_pid =~ ^[0-9]+$ ]]; then
+        printf 'nested Hyprland launcher wrote an invalid pid\n' >&2
+        exit 1
+    fi
+    new_instance=$(hyprctl -j instances | jq -c --argjson pid "$compositor_pid" \
+        '.[] | select(.pid == $pid)' | head -n 1)
     if [[ -n $new_instance ]]; then
         instance=$(jq -r '.instance' <<<"$new_instance")
-        compositor_pid=$(jq -r '.pid' <<<"$new_instance")
         break
     fi
     sleep 0.05
@@ -90,8 +115,7 @@ if [[ -z $instance || -z $compositor_pid ]]; then
     exit 1
 fi
 
-wayland_display=$(hyprctl -j instances | jq -r --arg instance "$instance" \
-    '.[] | select(.instance == $instance) | .wl_socket')
+wayland_display=$(jq -r '.wl_socket' <<<"$new_instance")
 
 output=
 for _ in {1..100}; do
@@ -106,17 +130,21 @@ if [[ -z $output ]]; then
 fi
 
 umask 077
-printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\nSHELL_DEV_PROFILE=%q\nSHELL_DEV_RENDERER=%q\n' \
-    "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" "$profile" "$renderer" >"$session_file"
+printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\nSHELL_DEV_HOST_WORKSPACE=%q\nSHELL_DEV_APP_ID=%q\nSHELL_DEV_WORK_DIR=%q\nSHELL_DEV_PROFILE=%q\nSHELL_DEV_RENDERER=%q\n' \
+    "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" \
+    "$host_workspace" "$application_id" "$work_dir" "$profile" "$renderer" >"$metadata_tmp"
+mv -- "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
 
 printf 'Nested Hyprland is ready.\n'
+printf '  session:  %s\n' "$session"
 printf '  instance: %s\n' "$instance"
 printf '  output:   %s (1280x720)\n' "$output"
+printf '  work dir: %s\n' "$work_dir"
 printf '  profile:  %s\n' "$profile"
 printf '  renderer: %s\n' "${renderer:-default}"
-printf '  show:     scripts/dev-show --focus\n'
-printf '  inspect:  scripts/dev-inspect\n'
-printf '  capture:  scripts/dev-screenshot\n'
+printf '  show:     scripts/dev-show --session %s --focus\n' "$session"
+printf '  inspect:  scripts/dev-inspect --session %s\n' "$session"
+printf '  capture:  scripts/dev-screenshot --session %s\n' "$session"
 printf 'Press Ctrl+Alt+Escape inside the nested session to stop it.\n'
 
 while kill -0 "$compositor_pid" 2>/dev/null; do
