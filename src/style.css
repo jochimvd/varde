@@ -1,8 +1,13 @@
 @define-color primary_color #FFFFFF;
-@define-color secondary_color rgba(0, 0, 0, 0.85);
 @define-color tertiary_color #595959;
 @define-color accent_color #9ECE6A;
 @define-color critical_color #F38BA8;
+@define-color surface_color rgba(0, 0, 0, 0.8);
+@define-color surface_low_color rgba(0, 0, 0, 0.7);
+@define-color text_secondary_color rgba(255, 255, 255, 0.7);
+@define-color text_muted_color rgba(255, 255, 255, 0.5);
+@define-color overlay_subtle_color rgba(255, 255, 255, 0.1);
+@define-color overlay_strong_color rgba(255, 255, 255, 0.2);
 
 @keyframes blink-critical {
     0% { color: inherit; }
@@ -19,7 +24,7 @@ window.bar {
     font-weight: normal;
     font-size: 14px;
     color: @primary_color;
-    background: @secondary_color;
+    background: @surface_color;
 }
 
 window.bar label {
@@ -32,7 +37,7 @@ window.bar label {
     min-height: 5px;
     border-radius: 50%;
     background: @accent_color;
-    box-shadow: 0 0 0 2px @secondary_color;
+    box-shadow: 0 0 0 2px @surface_color;
 }
 
 .region.left {
@@ -72,7 +77,7 @@ button {
 }
 
 .workspaces button:hover {
-    color: @secondary_color;
+    color: @surface_color;
     background: @primary_color;
 }
 
@@ -81,7 +86,7 @@ button {
 }
 
 .workspaces button.active:hover {
-    color: @secondary_color;
+    color: @surface_color;
 }
 
 .workspaces button.urgent {
@@ -137,12 +142,12 @@ popover.tray-menu button {
 }
 
 popover.tray-menu button:hover {
-    background: rgba(255, 255, 255, 0.12);
+    background: @overlay_subtle_color;
 }
 
 popover.tray-menu button:active,
 popover.tray-menu menubutton:checked > button {
-    background: rgba(255, 255, 255, 0.2);
+    background: @overlay_strong_color;
 }
 
 popover.tray-menu separator {
@@ -169,7 +174,7 @@ popover.tray-menu separator {
 tooltip {
     font-family: 'JetBrainsMono Nerd Font';
     padding: 8px 10px;
-    background: #000000;
+    background: @surface_color;
     border: 1px solid @tertiary_color;
     border-radius: 8px;
 }
@@ -183,7 +188,7 @@ window.launcher {
 
 .launcher-panel {
     border-radius: 5px;
-    background: rgba(0, 0, 0, 0.85);
+    background: transparent;
 }
 
 .launcher-input {
@@ -192,7 +197,7 @@ window.launcher {
     border: none;
     border-radius: 5px 5px 0 0;
     color: @primary_color;
-    background: rgba(0, 0, 0, 0.35);
+    background: @surface_color;
     box-shadow: none;
     caret-color: @primary_color;
 }
@@ -205,7 +210,7 @@ window.launcher {
 }
 
 .launcher-input placeholder {
-    color: rgba(255, 255, 255, 0.5);
+    color: @text_muted_color;
 }
 
 .launcher-results,
@@ -218,9 +223,13 @@ window.launcher {
     background: transparent;
 }
 
+.launcher-body {
+    background: @surface_low_color;
+}
+
 .launcher-results row:selected,
 .launcher-results.pointer-selection row:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: @overlay_subtle_color;
 }
 
 .launcher-row {
@@ -230,13 +239,13 @@ window.launcher {
 
 .launcher-thumbnail {
     border-radius: 3px;
-    background: rgba(255, 255, 255, 0.04);
+    background: @overlay_subtle_color;
 }
 
 .launcher-preview {
     padding: 10px;
-    box-shadow: inset 1px 0 rgba(255, 255, 255, 0.08);
-    background: rgba(0, 0, 0, 0.18);
+    box-shadow: inset 1px 0 @overlay_subtle_color;
+    background: @overlay_subtle_color;
 }
 
 .launcher-preview-message {
@@ -247,7 +256,7 @@ window.launcher {
 .launcher-message {
     min-height: 44px;
     padding: 0 10px;
-    color: rgba(255, 255, 255, 0.5);
+    color: @text_muted_color;
 }
 
 .launcher-message.error {
@@ -281,9 +290,9 @@ window.notification-popups {
 
 .notification-popup {
     padding: 10px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid @overlay_strong_color;
     border-radius: 8px;
-    background: rgba(0, 0, 0, 0.92);
+    background: @surface_color;
 }
 
 .notification-popup.critical {
@@ -291,7 +300,7 @@ window.notification-popups {
 }
 
 .notification-popup-app {
-    color: rgba(255, 255, 255, 0.6);
+    color: @text_secondary_color;
     font-size: 12px;
 }
 
@@ -301,7 +310,7 @@ window.notification-popups {
 
 .notification-popup-body {
     margin-top: 2px;
-    color: rgba(255, 255, 255, 0.72);
+    color: @text_secondary_color;
 }
 
 .notification-progress {
@@ -312,7 +321,7 @@ window.notification-popups {
 .notification-progress trough {
     min-height: 4px;
     border-radius: 2px;
-    background: rgba(255, 255, 255, 0.12);
+    background: @overlay_subtle_color;
 }
 
 .notification-progress progress {
@@ -323,9 +332,9 @@ window.notification-popups {
 
 .notification-center {
     padding: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
+    border: 1px solid @overlay_strong_color;
     border-radius: 8px;
-    background: rgba(0, 0, 0, 0.9);
+    background: @surface_color;
 }
 
 .notification-center-header {
@@ -342,8 +351,8 @@ window.notification-popups {
     margin: 3px 0;
     padding: 5px 10px;
     border-radius: 6px;
-    color: rgba(255, 255, 255, 0.7);
-    background: rgba(255, 255, 255, 0.08);
+    color: @text_secondary_color;
+    background: @overlay_subtle_color;
 }
 
 .notification-center-icon {
@@ -355,7 +364,7 @@ window.notification-popups {
 .notification-center-control:hover,
 .notification-center-control.active {
     color: @primary_color;
-    background: rgba(255, 255, 255, 0.16);
+    background: @overlay_strong_color;
 }
 
 .notification-center-control.active {
@@ -368,7 +377,7 @@ window.notification-popups {
 
 .notification-group {
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.055);
+    background: @overlay_subtle_color;
 }
 
 .notification-group-header {
@@ -383,12 +392,12 @@ window.notification-popups {
 }
 
 .notification-group-toggle:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: @overlay_strong_color;
 }
 
 .notification-group-disclosure {
     min-width: 12px;
-    color: rgba(255, 255, 255, 0.55);
+    color: @text_secondary_color;
 }
 
 .notification-group-icon {
@@ -399,13 +408,13 @@ window.notification-popups {
     min-width: 16px;
     padding: 1px 5px;
     border-radius: 5px;
-    color: rgba(255, 255, 255, 0.7);
-    background: rgba(255, 255, 255, 0.1);
+    color: @text_secondary_color;
+    background: @overlay_subtle_color;
 }
 
 .notification-row {
     padding: 8px 10px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-top: 1px solid @overlay_subtle_color;
 }
 
 .notification-row.critical {
@@ -417,20 +426,20 @@ window.notification-popups {
 }
 
 .notification-time {
-    color: rgba(255, 255, 255, 0.45);
+    color: @text_muted_color;
     font-size: 12px;
 }
 
 .notification-body {
     margin-top: 2px;
-    color: rgba(255, 255, 255, 0.7);
+    color: @text_secondary_color;
 }
 
 .notification-center-empty,
 .notification-center-unavailable {
     min-height: 90px;
     padding: 0 18px;
-    color: rgba(255, 255, 255, 0.5);
+    color: @text_muted_color;
 }
 
 .notification-center-unavailable {

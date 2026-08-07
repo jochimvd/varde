@@ -158,6 +158,7 @@ impl Launcher {
         columns.append(preview.space());
 
         let results = gtk::Overlay::new();
+        results.add_css_class("launcher-body");
         results.set_child(Some(&columns));
         results.add_overlay(preview.root());
         results.set_measure_overlay(preview.root(), false);
