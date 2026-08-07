@@ -1,4 +1,6 @@
+mod daemon;
 mod model;
+mod state;
 mod view;
 
 use std::{cell::RefCell, rc::Rc, thread, time::Duration};
@@ -12,7 +14,7 @@ use zbus::{
 };
 
 use model::Snapshot;
-use view::{Bell, Center};
+use view::{Bell, Center, Popups};
 
 const FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
 const MONITOR_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -29,6 +31,8 @@ pub struct Manager {
     snapshot: RefCell<Snapshot>,
     bell: RefCell<Option<Bell>>,
     center: RefCell<Option<Center>>,
+    popups: RefCell<Option<Popups>>,
+    daemon: RefCell<Option<daemon::Control>>,
     refresh: async_channel::Sender<()>,
     startup: RefCell<Option<Startup>>,
 }
@@ -47,12 +51,33 @@ impl Manager {
             snapshot: RefCell::new(Snapshot::unavailable()),
             bell: RefCell::new(None),
             center: RefCell::new(None),
+            popups: RefCell::new(None),
+            daemon: RefCell::new(None),
             refresh,
             startup: RefCell::new(Some((requests, results, snapshots))),
         })
     }
 
-    pub fn start(self: &Rc<Self>) {
+    pub fn start(self: &Rc<Self>, app: &gtk::Application) {
+        if std::env::var_os("SHELL_DEVELOPMENT").is_some() {
+            self.startup.take();
+            self.popups.replace(Some(Popups::new(app, self)));
+            let (changes, views) = async_channel::bounded(1);
+            let Some(daemon) = daemon::start(changes) else {
+                return;
+            };
+            crate::background::listen(views, {
+                let manager = Rc::downgrade(self);
+                let daemon = daemon.clone();
+                move |()| {
+                    if let Some(manager) = manager.upgrade() {
+                        manager.apply(daemon.snapshot());
+                    }
+                }
+            });
+            self.daemon.replace(Some(daemon));
+            return;
+        }
         let Some((requests, results, snapshots)) = self.startup.take() else {
             return;
         };
@@ -91,7 +116,7 @@ impl Manager {
             move |_, _| {
                 app.activate();
                 before_open();
-                manager.toggle(&app);
+                manager.toggle();
             }
         });
         app.add_action(&action);
@@ -117,7 +142,17 @@ impl Manager {
         }
     }
 
+    pub(super) fn center_closed(&self) {
+        if let Some(popups) = self.popups.borrow().as_ref() {
+            popups.update(&self.snapshot.borrow(), false);
+        }
+    }
+
     pub(super) fn clear(&self) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.clear();
+            return;
+        }
         let refresh = self.refresh.clone();
         crate::background::spawn("notification-clear", move || {
             clear_all();
@@ -126,6 +161,10 @@ impl Manager {
     }
 
     pub(super) fn toggle_dnd(&self) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.toggle_dnd();
+            return;
+        }
         let refresh = self.refresh.clone();
         crate::background::spawn("notification-dnd", move || {
             command(&["mode", "-t", DND_MODE]);
@@ -133,7 +172,31 @@ impl Manager {
         });
     }
 
-    fn toggle(self: &Rc<Self>, app: &gtk::Application) {
+    pub(super) fn dismiss(&self, id: u32, active: bool) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.dismiss(id, active);
+        }
+    }
+
+    pub(super) fn dismiss_group(&self, notifications: Vec<(u32, bool)>) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.dismiss_group(notifications);
+        }
+    }
+
+    pub(super) fn invoke_default(&self, id: u32) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.invoke_default(id);
+        }
+    }
+
+    pub(super) fn displayed(&self, notifications: Vec<(u32, u64)>) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.displayed(notifications);
+        }
+    }
+
+    fn toggle(self: &Rc<Self>) {
         if self
             .center
             .borrow()
@@ -144,7 +207,14 @@ impl Manager {
             return;
         }
         if self.center.borrow().is_none() {
-            let center = Center::new(app, self);
+            let anchor = self
+                .bell
+                .borrow()
+                .as_ref()
+                .expect("the bar creates the bell before opening notifications")
+                .button
+                .clone();
+            let center = Center::new(&anchor, self, self.daemon.borrow().is_some());
             center.update(&self.snapshot.borrow());
             self.center.replace(Some(center));
         }
@@ -153,7 +223,12 @@ impl Manager {
             .as_ref()
             .expect("center was just constructed")
             .show();
-        self.request_refresh();
+        if let Some(popups) = self.popups.borrow().as_ref() {
+            popups.hide();
+        }
+        if self.daemon.borrow().is_none() {
+            self.request_refresh();
+        }
     }
 
     fn request_refresh(&self) {
@@ -166,6 +241,14 @@ impl Manager {
         }
         if let Some(center) = self.center.borrow().as_ref() {
             center.update(&snapshot);
+        }
+        if let Some(popups) = self.popups.borrow().as_ref() {
+            let center_open = self
+                .center
+                .borrow()
+                .as_ref()
+                .is_some_and(Center::is_visible);
+            popups.update(&snapshot, center_open);
         }
         self.snapshot.replace(snapshot);
     }

@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 
+use super::state;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct Snapshot {
     pub groups: Vec<Group>,
@@ -59,9 +61,21 @@ pub(super) struct Group {
 pub(super) struct Notification {
     pub id: u32,
     #[serde(default)]
+    pub revision: u64,
+    #[serde(default)]
+    pub received_at: Option<i64>,
+    #[serde(skip)]
+    pub active: bool,
+    #[serde(default)]
     app_name: Option<String>,
     #[serde(default)]
-    app_icon: Option<String>,
+    pub app_icon: Option<String>,
+    #[serde(default)]
+    pub image: Option<String>,
+    #[serde(skip)]
+    pub image_data: Option<state::ImageData>,
+    #[serde(default)]
+    pub progress: Option<u8>,
     #[serde(default)]
     desktop_entry: Option<String>,
     #[serde(default)]
@@ -73,9 +87,48 @@ pub(super) struct Notification {
 }
 
 pub(super) fn parse(active: &[u8], history: &[u8], dnd: bool) -> Option<Snapshot> {
-    let active = serde_json::from_slice::<Vec<Notification>>(active).ok()?;
+    let mut active = serde_json::from_slice::<Vec<Notification>>(active).ok()?;
+    active
+        .iter_mut()
+        .for_each(|notification| notification.active = true);
     let history = serde_json::from_slice::<Vec<Notification>>(history).ok()?;
     Some(group(active.into_iter().chain(history), dnd))
+}
+
+pub(super) fn from_state(store: &state::Store) -> Snapshot {
+    let active = store
+        .active()
+        .map(|notification| from_state_notification(notification, true));
+    let history = store
+        .history()
+        .map(|notification| from_state_notification(notification, false));
+    group(active.chain(history), store.dnd())
+}
+
+fn from_state_notification(notification: &state::Notification, active: bool) -> Notification {
+    Notification {
+        id: notification.id,
+        revision: notification.revision,
+        received_at: Some(notification.received_at),
+        active,
+        app_name: Some(notification.app_name.clone()),
+        app_icon: (!notification.app_icon.is_empty()).then(|| notification.app_icon.clone()),
+        image: (!notification.image.is_empty()).then(|| notification.image.clone()),
+        image_data: notification.image_data.clone(),
+        progress: notification.progress,
+        desktop_entry: (!notification.desktop_entry.is_empty())
+            .then(|| notification.desktop_entry.clone()),
+        summary: notification.summary.clone(),
+        body: notification.body.clone(),
+        urgency: Some(
+            match notification.urgency {
+                state::Urgency::Low => "low",
+                state::Urgency::Normal => "normal",
+                state::Urgency::Critical => "critical",
+            }
+            .into(),
+        ),
+    }
 }
 
 fn group(notifications: impl Iterator<Item = Notification>, dnd: bool) -> Snapshot {
