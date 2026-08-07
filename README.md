@@ -1,131 +1,52 @@
 # Varde
 
-A custom desktop shell for Hyprland, written in Rust.
+A small, personal desktop shell for Hyprland, written in Rust with GTK 4.
 
-The status bar currently provides Hyprland workspaces and window titles,
-date and time, Bluetooth, network and audio state, CPU and memory usage,
-notifications, idle inhibition, privacy indicators, and a StatusNotifier tray.
-Its layout and behavior are defined directly in the Rust source.
+![Varde application launcher](docs/images/varde-launcher.png)
 
-Varde implements the desktop notification service, floating popups, history,
-and notification center. The center can also be opened as an application
-action:
+![Varde notification center](docs/images/varde-notifications.png)
+
+Varde currently provides a status bar, application and clipboard launchers,
+notifications, workspace controls, system status, idle inhibition, privacy
+indicators, and a StatusNotifier tray. Its layout and behavior are configured
+directly in the source.
+
+## Usage
 
 ```sh
-gapplication action org.varde.desktop notifications
+cargo run
 ```
 
-The application launcher is exposed as a GTK application action, so the shell
-continues to run as one process:
+The launcher and notification center are exposed as application actions:
 
 ```sh
 gapplication action org.varde.desktop launcher
+gapplication action org.varde.desktop notifications
 ```
 
-It lists visible desktop applications and supports fuzzy searching. The same
-window can also select newline-delimited input for shell scripts:
-
-```sh
-printf "Lock\nSuspend\nReboot\nShutdown\nLog Out" |
-  varde launcher --dmenu -p "System..."
-```
-
-Clipboard history is available through a second action or the launcher CLI:
+The launcher fuzzy-searches installed applications. It can also search
+clipboard history or act as a dmenu-style selector:
 
 ```sh
 gapplication action org.varde.desktop clipboard
 varde launcher clipboard
+printf "Lock\nSuspend\nReboot\nShutdown" | varde launcher --dmenu -p "System..."
 ```
 
-It reads the existing cliphist history, fuzzy-searches text and image metadata,
-loads visible image thumbnails in the background, and restores the selected
-entry to the Wayland clipboard.
+Notifications include floating popups, persistent history, and a notification
+center.
 
-The current system requires GTK 4, gtk4-layer-shell, Hyprland, PipeWire,
-WirePlumber, iwd, BlueZ, iproute2, PulseAudio utilities, coreutils, `jq`, `grim`,
-and JetBrains Mono Nerd Font. Clipboard history requires `cliphist`, `wl-copy`,
-and an existing `wl-paste --watch cliphist store` process. The bar's actions
-use `hyprctl`, `wpctl`, `pactl`, `ip`, `iwctl`, `bluetoothctl`, `pw-dump`,
-`dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
-`btop`, and the terminal named by `$TERMINAL`.
+## Requirements
 
-## Development workflow
+Varde targets its author's current Arch Linux system. The setup uses GTK 4,
+gtk4-layer-shell, Hyprland, PipeWire, WirePlumber, iwd, BlueZ, iproute2,
+PulseAudio utilities, coreutils, `jq`, `grim`, and JetBrains Mono Nerd Font.
+Clipboard history additionally needs `cliphist`, `wl-copy`, and a running
+`wl-paste --watch cliphist store` process.
 
-Development happens in a nested Hyprland compositor rather than the live
-desktop session.
+Bar actions call `hyprctl`, `wpctl`, `pactl`, `ip`, `iwctl`, `bluetoothctl`,
+`pw-dump`, `dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
+`btop`, and the terminal configured by `$TERMINAL`.
 
-Start the development session from a terminal in Hyprland:
-
-```sh
-scripts/dev-session
-```
-
-This builds `target/debug/varde`, starts a nested Hyprland instance with
-`dev/hyprland.lua`, and launches the binary inside it. The 1280x720 host window
-is created silently on a dedicated `varde-dev` workspace, so starting the
-session does not switch workspaces, steal focus, or retile the current
-workspace.
-
-The launcher stays running for the lifetime of the session. Press Ctrl+C in
-that terminal to stop it. After showing the nested session, it can also be
-stopped with Ctrl+Alt+Escape inside its window.
-
-Show the nested compositor when wanted:
-
-```sh
-scripts/dev-show --focus
-```
-
-Inspect its monitor, layer-surface, and window state without showing it:
-
-```sh
-scripts/dev-inspect
-```
-
-Capture only the nested output:
-
-```sh
-scripts/dev-screenshot
-scripts/dev-screenshot target/dev/another-name.png
-```
-
-The default session screenshot path is `target/dev/default/screenshot.png`.
-
-Multiple sessions can run at once. Give each agent a separate Git worktree and
-use the same unique session ID with every development command:
-
-```sh
-scripts/dev-session --session agent-1
-scripts/dev-inspect --session agent-1
-scripts/dev-screenshot --session agent-1
-scripts/dev-show --session agent-1 --focus
-```
-
-Named sessions keep their metadata, Wayland socket, host workspace, GTK
-application ID, working directory, and default screenshot separate. Their
-working directory is `$XDG_RUNTIME_DIR/varde-dev/<session>/work`, so
-applications with relative paths cannot write into the Git worktree. Their
-screenshots default to `target/dev/<session>/screenshot.png`. Omitting
-`--session` selects the single-instance `default` session, which is reserved
-for manual development. Automated agents must always pass their unique session
-ID explicitly.
-
-The nested compositor has its own config, Hyprland instance signature,
-Wayland socket, and output. Inspection and screenshots target those nested
-identifiers. `HYPRLAND_NO_SD_VARS=1` prevents the test compositor from
-exporting its environment into the live user session. The sessions
-intentionally retain access to the live user D-Bus
-and system services, so notification, tray, idle, audio, network, and Bluetooth
-interactions can affect the live desktop.
-
-Run the project checks with:
-
-```sh
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-Hyprland --verify-config --config dev/hyprland.lua
-```
-
-More implementation details and relevant Hyprland documentation are collected
-in [docs/development.md](docs/development.md).
+For the isolated nested-Hyprland development workflow and project checks, see
+[docs/development.md](docs/development.md).

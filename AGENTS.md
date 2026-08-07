@@ -1,6 +1,6 @@
 # Project guidelines
 
-This project is a custom desktop shell for Hyprland on Arch Linux, written in Rust. It starts as a status bar and may later grow an app launcher, settings panel, and other shell components.
+This project is a custom desktop shell for Hyprland on Arch Linux, written in Rust.
 
 - Keep the implementation small, direct, and easy to understand.
 - Prefer simple code over abstractions, frameworks, and speculative flexibility.
