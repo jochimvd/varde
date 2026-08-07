@@ -19,6 +19,7 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 pub fn widget() -> gtk::Box {
     let root = gtk::Box::builder()
         .spacing(0)
+        .hexpand(true)
         .valign(gtk::Align::Center)
         .build();
 
@@ -30,6 +31,9 @@ pub fn widget() -> gtk::Box {
 
     let window = gtk::Label::new(None);
     window.add_css_class("window");
+    window.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    window.set_hexpand(true);
+    window.set_single_line_mode(true);
     window.set_xalign(0.0);
 
     root.append(&workspaces);
