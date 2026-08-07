@@ -33,6 +33,7 @@ pub fn widget() -> gtk::Box {
     window.add_css_class("window");
     window.set_ellipsize(gtk::pango::EllipsizeMode::End);
     window.set_hexpand(true);
+    window.set_max_width_chars(1);
     window.set_single_line_mode(true);
     window.set_xalign(0.0);
 

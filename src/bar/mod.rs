@@ -42,6 +42,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     let left = region("left", gtk::Align::Fill);
     let center = region("center", gtk::Align::Center);
     let right = region("right", gtk::Align::End);
+    left.set_hexpand(true);
     right.set_spacing(MODULE_GAP);
 
     left.append(&hyprland::widget());
@@ -57,7 +58,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     right.append(&notifications.button(app));
     right.append(&services.privacy);
 
-    let layout = constrained_layout(&left, &center, &right);
+    let layout = bar_layout(&left, &center, &right);
 
     window.set_child(Some(&layout));
     window.present();
@@ -140,40 +141,11 @@ fn update_tray_reveal(
     });
 }
 
-fn constrained_layout(left: &gtk::Box, center: &gtk::Box, right: &gtk::Box) -> gtk::Box {
-    use gtk::ConstraintAttribute as Attribute;
-
-    let manager = gtk::ConstraintLayout::new();
-    manager
-        .add_constraints_from_description(
-            ["H:|[left][center][right]|"],
-            0,
-            0,
-            [("left", left), ("center", center), ("right", right)],
-        )
-        .expect("valid bar layout constraints");
-    let align = |target: &gtk::Box, attribute| {
-        gtk::Constraint::new(
-            Some(target),
-            attribute,
-            gtk::ConstraintRelation::Eq,
-            None::<&gtk::Box>,
-            attribute,
-            1.0,
-            0.0,
-            gtk::ffi::GTK_CONSTRAINT_STRENGTH_REQUIRED,
-        )
-    };
-    manager.add_constraint(align(center, Attribute::CenterX));
-    for child in [left, center, right] {
-        manager.add_constraint(align(child, Attribute::CenterY));
-    }
-
-    let layout = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    layout.append(left);
-    layout.append(center);
-    layout.append(right);
-    layout.set_layout_manager(Some(manager));
+fn bar_layout(left: &gtk::Box, center: &gtk::Box, right: &gtk::Box) -> gtk::CenterBox {
+    let layout = gtk::CenterBox::new();
+    layout.set_start_widget(Some(left));
+    layout.set_center_widget(Some(center));
+    layout.set_end_widget(Some(right));
     layout
 }
 
