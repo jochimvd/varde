@@ -30,12 +30,24 @@ printf "Lock\nSuspend\nReboot\nShutdown\nLog Out" |
   shell launcher --dmenu -p "System..."
 ```
 
+Clipboard history is available through a second action or the launcher CLI:
+
+```sh
+gapplication action be.jochim.shell clipboard
+shell launcher clipboard
+```
+
+It reads the existing cliphist history, fuzzy-searches text and image metadata,
+loads visible image thumbnails in the background, and restores the selected
+entry to the Wayland clipboard.
+
 The current system requires GTK 4, gtk4-layer-shell, Hyprland, Mako, PipeWire,
 WirePlumber, iwd, BlueZ, iproute2, PulseAudio utilities, coreutils, `jq`, `grim`,
-and JetBrains Mono Nerd Font. The bar's actions use `hyprctl`, `wpctl`, `pactl`,
-`ip`, `iwctl`, `bluetoothctl`, `pw-dump`, `makoctl`,
-`dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`, `btop`, and the
-terminal named by `$TERMINAL`.
+and JetBrains Mono Nerd Font. Clipboard history requires `cliphist`, `wl-copy`,
+and an existing `wl-paste --watch cliphist store` process. The bar's actions
+use `hyprctl`, `wpctl`, `pactl`, `ip`, `iwctl`, `bluetoothctl`, `pw-dump`,
+`makoctl`, `dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
+`btop`, and the terminal named by `$TERMINAL`.
 
 ## Development workflow
 
