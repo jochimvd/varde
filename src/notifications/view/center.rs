@@ -177,32 +177,21 @@ impl Center {
         };
 
         let mut views = self.group_views.borrow_mut();
-        let mut previous = None;
-        let mut existing = std::mem::take(&mut *views);
-        for group in groups {
-            let mut view = existing
-                .iter()
-                .position(|view| view.key == group.key)
-                .map(|index| existing.remove(index))
-                .unwrap_or_else(|| {
-                    GroupView::new(
-                        group.key.clone(),
-                        &self.collapsed,
-                        &self.popover,
-                        &self.manager,
-                        self.interactive,
-                    )
-                });
-            view.update(group);
-            if view.container.parent().is_none() {
-                self.groups.append(&view.container);
-            }
-            self.groups
-                .reorder_child_after(&view.container, previous.as_ref());
-            previous = Some(view.container.clone());
+        while views.len() < groups.len() {
+            let view = GroupView::new(
+                &self.collapsed,
+                &self.popover,
+                &self.manager,
+                self.interactive,
+            );
+            self.groups.append(&view.container);
             views.push(view);
         }
-        for view in existing {
+        for (view, group) in views.iter_mut().zip(groups.iter().copied()) {
+            view.update(group);
+        }
+        while views.len() > groups.len() {
+            let view = views.pop().expect("group view count exceeds snapshot");
             self.groups.remove(&view.container);
         }
         self.stack.set_visible_child_name(if !snapshot.available {
@@ -262,7 +251,7 @@ struct GroupView {
     rows: gtk::Box,
     revealer: gtk::Revealer,
     row_views: Vec<RowView>,
-    key: String,
+    key: Rc<RefCell<String>>,
     notifications: Rc<RefCell<Vec<(u32, bool)>>>,
     collapsed: Rc<RefCell<HashSet<String>>>,
     manager: std::rc::Weak<Manager>,
@@ -271,7 +260,6 @@ struct GroupView {
 
 impl GroupView {
     fn new(
-        key: String,
         collapsed: &Rc<RefCell<HashSet<String>>>,
         popover: &gtk::Popover,
         manager: &std::rc::Weak<Manager>,
@@ -312,27 +300,46 @@ impl GroupView {
             .child(&rows)
             .build();
 
+        let key = Rc::new(RefCell::new(String::new()));
         let notifications = Rc::new(RefCell::new(Vec::new()));
+        let pressed_key = Rc::new(RefCell::new(None));
         let toggle = gtk::Button::builder()
             .focusable(false)
             .hexpand(true)
             .child(&header)
             .build();
         toggle.add_css_class("notification-group-toggle");
+        toggle.connect_state_flags_changed({
+            let key = Rc::clone(&key);
+            let pressed_key = Rc::clone(&pressed_key);
+            move |_, flags| {
+                if flags.contains(gtk::StateFlags::ACTIVE) {
+                    pressed_key.replace(Some(key.borrow().clone()));
+                }
+            }
+        });
         toggle.connect_clicked({
             let collapsed = Rc::clone(collapsed);
-            let key = key.clone();
+            let key = Rc::clone(&key);
+            let pressed_key = Rc::clone(&pressed_key);
             let revealer = revealer.clone();
             let disclosure = disclosure.clone();
             let popover = popover.clone();
             move |_| {
+                let pressed = pressed_key
+                    .borrow_mut()
+                    .take()
+                    .unwrap_or_else(|| key.borrow().clone());
+                if pressed != *key.borrow() {
+                    return;
+                }
                 let reveal = !revealer.reveals_child();
                 revealer.set_reveal_child(reveal);
                 disclosure.set_text(if reveal { "▾" } else { "▸" });
                 if reveal {
-                    collapsed.borrow_mut().remove(&key);
+                    collapsed.borrow_mut().remove(&pressed);
                 } else {
-                    collapsed.borrow_mut().insert(key.clone());
+                    collapsed.borrow_mut().insert(pressed);
                 }
                 glib::timeout_add_local_once(Duration::from_millis(160), {
                     let popover = popover.clone();
@@ -343,15 +350,28 @@ impl GroupView {
         if interactive {
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
+            let pressed_notifications = Rc::new(RefCell::new(None));
+            dismiss.connect_pressed({
+                let notifications = Rc::clone(&notifications);
+                let pressed_notifications = Rc::clone(&pressed_notifications);
+                move |_, _, _, _| {
+                    pressed_notifications.replace(Some(notifications.borrow().clone()));
+                }
+            });
             dismiss.connect_released({
                 let toggle = toggle.clone();
                 let manager = manager.clone();
                 let notifications = Rc::clone(&notifications);
+                let pressed_notifications = Rc::clone(&pressed_notifications);
                 move |_, _, x, y| {
+                    let target = pressed_notifications
+                        .borrow_mut()
+                        .take()
+                        .unwrap_or_else(|| notifications.borrow().clone());
                     if toggle.contains(x, y)
                         && let Some(manager) = manager.upgrade()
                     {
-                        manager.dismiss_group(notifications.borrow().clone());
+                        manager.dismiss_group(target);
                     }
                 }
             });
@@ -378,7 +398,6 @@ impl GroupView {
     }
 
     fn update(&mut self, group: &Group) {
-        debug_assert_eq!(self.key, group.key);
         let (name, icon) = application(group);
         self.image.clear();
         if let Some(icon) = icon {
@@ -386,6 +405,7 @@ impl GroupView {
         }
         self.name.set_label(&name);
         self.count.set_label(&group.notifications.len().to_string());
+        self.key.replace(group.key.clone());
         self.notifications.replace(
             group
                 .notifications
@@ -396,24 +416,16 @@ impl GroupView {
 
         let is_collapsed = self.collapsed.borrow().contains(&group.key);
 
-        let mut previous = None;
-        let mut existing = std::mem::take(&mut self.row_views);
-        for notification in &group.notifications {
-            let view = existing
-                .iter()
-                .position(|view| view.id == notification.id)
-                .map(|index| existing.remove(index))
-                .unwrap_or_else(|| RowView::new(notification.id, &self.manager, self.interactive));
-            view.update(notification);
-            if view.container.parent().is_none() {
-                self.rows.append(&view.container);
-            }
-            self.rows
-                .reorder_child_after(&view.container, previous.as_ref());
-            previous = Some(view.container.clone());
+        while self.row_views.len() < group.notifications.len() {
+            let view = RowView::new(&self.manager, self.interactive);
+            self.rows.append(&view.container);
             self.row_views.push(view);
         }
-        for view in existing {
+        for (view, notification) in self.row_views.iter().zip(&group.notifications) {
+            view.update(notification);
+        }
+        while self.row_views.len() > group.notifications.len() {
+            let view = self.row_views.pop().expect("row view count exceeds group");
             self.rows.remove(&view.container);
         }
 
@@ -424,17 +436,16 @@ impl GroupView {
 }
 
 struct RowView {
-    id: u32,
     container: gtk::Button,
     summary: gtk::Label,
     time: gtk::Label,
     body: gtk::Label,
     progress: gtk::ProgressBar,
-    active: Rc<Cell<bool>>,
+    target: Rc<Cell<(u32, bool)>>,
 }
 
 impl RowView {
-    fn new(id: u32, manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
+    fn new(manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
@@ -470,27 +481,48 @@ impl RowView {
         let container = gtk::Button::builder().child(&content).build();
         container.add_css_class("notification-row");
 
-        let active = Rc::new(Cell::new(false));
+        let target = Rc::new(Cell::new((0, false)));
         if interactive {
+            let pressed_id = Rc::new(Cell::new(None));
+            container.connect_state_flags_changed({
+                let target = Rc::clone(&target);
+                let pressed_id = Rc::clone(&pressed_id);
+                move |_, flags| {
+                    if flags.contains(gtk::StateFlags::ACTIVE) {
+                        pressed_id.set(Some(target.get().0));
+                    }
+                }
+            });
             container.connect_clicked({
                 let manager = manager.clone();
+                let target = Rc::clone(&target);
+                let pressed_id = Rc::clone(&pressed_id);
                 move |_| {
                     if let Some(manager) = manager.upgrade() {
+                        let id = pressed_id.take().unwrap_or_else(|| target.get().0);
                         manager.invoke_default(id);
                     }
                 }
             });
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
+            let pressed_target = Rc::new(Cell::new(None));
+            dismiss.connect_pressed({
+                let target = Rc::clone(&target);
+                let pressed_target = Rc::clone(&pressed_target);
+                move |_, _, _, _| pressed_target.set(Some(target.get()))
+            });
             dismiss.connect_released({
                 let container = container.clone();
                 let manager = manager.clone();
-                let active = Rc::clone(&active);
+                let target = Rc::clone(&target);
+                let pressed_target = Rc::clone(&pressed_target);
                 move |_, _, x, y| {
+                    let (id, active) = pressed_target.take().unwrap_or_else(|| target.get());
                     if container.contains(x, y)
                         && let Some(manager) = manager.upgrade()
                     {
-                        manager.dismiss(id, active.get());
+                        manager.dismiss(id, active);
                     }
                 }
             });
@@ -498,19 +530,17 @@ impl RowView {
         }
 
         Self {
-            id,
             container,
             summary,
             time,
             body,
             progress,
-            active,
+            target,
         }
     }
 
     fn update(&self, notification: &Notification) {
-        debug_assert_eq!(self.id, notification.id);
-        self.active.set(notification.active);
+        self.target.set((notification.id, notification.active));
         if notification.urgency.as_deref() == Some("critical") {
             self.container.add_css_class("critical");
         } else {
