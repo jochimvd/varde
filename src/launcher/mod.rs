@@ -1,5 +1,6 @@
 mod clipboard;
 mod command;
+mod preview;
 mod search;
 mod source;
 mod view;
