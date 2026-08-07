@@ -10,7 +10,7 @@ use gtk4_layer_shell::LayerShell;
 use super::source::{
     Activation, Event, ImageKind, ImagePixels, Item, Items, LoadedItem, Outcome, Source, Visual,
 };
-use super::{Manager, Mode, search, source};
+use super::{Manager, Mode, preview::Preview, search, source};
 
 const LAUNCHER_NAME: &str = "shell-launcher";
 const PANEL_WIDTH: i32 = 600;
@@ -18,8 +18,6 @@ const ROW_HEIGHT: i32 = 44;
 const VISIBLE_ROWS: i32 = 10;
 const PANEL_HEIGHT: i32 = ROW_HEIGHT * (VISIBLE_ROWS + 1);
 const PREVIEW_AREA_HEIGHT: i32 = 300;
-const PREVIEW_WIDTH: i32 = PANEL_WIDTH / 2;
-const PREVIEW_HEIGHT: i32 = PREVIEW_AREA_HEIGHT;
 const THUMBNAIL_WIDTH: i32 = 56;
 const THUMBNAIL_HEIGHT: i32 = 36;
 const POINTER_ACTIVATION_DISTANCE: f64 = 3.0;
@@ -33,12 +31,7 @@ pub(super) struct Launcher {
     results: gtk::Overlay,
     message: gtk::Label,
     scroll: gtk::ScrolledWindow,
-    preview: gtk::Box,
-    preview_space: gtk::Box,
-    preview_stack: gtk::Stack,
-    preview_picture: gtk::Picture,
-    preview_text: gtk::Label,
-    preview_id: RefCell<Option<String>>,
+    preview: Preview,
     source: RefCell<Rc<dyn Source>>,
     items: RefCell<Vec<Item>>,
     visible: RefCell<Vec<usize>>,
@@ -51,10 +44,6 @@ pub(super) struct Launcher {
     thumbnail_cache: RefCell<HashMap<String, Option<gdk::MemoryTexture>>>,
     thumbnail_pending: RefCell<HashSet<String>>,
     thumbnail_targets: RefCell<HashMap<String, glib::WeakRef<gtk::Picture>>>,
-    preview_cache: RefCell<HashMap<String, Option<gdk::MemoryTexture>>>,
-    preview_pending: RefCell<HashSet<String>>,
-    text_cache: RefCell<HashMap<String, Option<String>>>,
-    text_pending: RefCell<HashSet<String>>,
     hover_selection: Rc<Cell<bool>>,
     pointer_position: Rc<Cell<Option<(f64, f64)>>>,
 }
@@ -162,67 +151,17 @@ impl Launcher {
         stack.add_named(&scroll, Some("results"));
         stack.add_named(&message, Some("message"));
 
-        let preview_picture = gtk::Picture::builder()
-            .can_shrink(true)
-            .content_fit(gtk::ContentFit::Contain)
-            .hexpand(true)
-            .vexpand(true)
-            .build();
-        let preview_text = gtk::Label::builder()
-            .hexpand(true)
-            .vexpand(true)
-            .xalign(0.0)
-            .yalign(0.0)
-            .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
-            .build();
-        let preview_text_scroll = gtk::ScrolledWindow::builder()
-            .child(&preview_text)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vscrollbar_policy(gtk::PolicyType::Automatic)
-            .build();
-        let preview_message = gtk::Label::builder()
-            .label("Could not load image preview")
-            .wrap(true)
-            .justify(gtk::Justification::Center)
-            .build();
-        preview_message.add_css_class("launcher-preview-message");
-        let preview_stack = gtk::Stack::new();
-        preview_stack.set_hexpand(true);
-        preview_stack.set_vexpand(true);
-        preview_stack.add_named(&preview_picture, Some("image"));
-        preview_stack.add_named(&preview_text_scroll, Some("text"));
-        preview_stack.add_named(&preview_message, Some("message"));
-        let preview_panel = gtk::Box::builder()
-            .vexpand(true)
-            .valign(gtk::Align::Fill)
-            .build();
-        preview_panel.add_css_class("launcher-preview");
-        preview_panel.append(&preview_stack);
-
-        let preview_offset = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        preview_offset.set_can_target(false);
-        let preview = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        preview.set_homogeneous(true);
-        preview.set_can_target(false);
-        preview.set_hexpand(true);
-        preview.set_vexpand(true);
-        preview.append(&preview_offset);
-        preview.append(&preview_panel);
-        preview.set_visible(false);
-
-        let preview_space = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        preview_space.set_visible(false);
+        let preview = Preview::new(PANEL_WIDTH / 2, PREVIEW_AREA_HEIGHT);
         let columns = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         columns.set_homogeneous(true);
         columns.append(&stack);
-        columns.append(&preview_space);
+        columns.append(preview.space());
 
         let results = gtk::Overlay::new();
         results.set_child(Some(&columns));
-        results.add_overlay(&preview);
-        results.set_measure_overlay(&preview, false);
-        results.set_clip_overlay(&preview, true);
+        results.add_overlay(preview.root());
+        results.set_measure_overlay(preview.root(), false);
+        results.set_clip_overlay(preview.root(), true);
 
         let panel = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
@@ -328,11 +267,6 @@ impl Launcher {
             message,
             scroll,
             preview,
-            preview_space,
-            preview_stack,
-            preview_picture,
-            preview_text,
-            preview_id: RefCell::new(None),
             source: RefCell::new(source::apps()),
             items: RefCell::new(Vec::new()),
             visible: RefCell::new(Vec::new()),
@@ -345,10 +279,6 @@ impl Launcher {
             thumbnail_cache: RefCell::new(HashMap::new()),
             thumbnail_pending: RefCell::new(HashSet::new()),
             thumbnail_targets: RefCell::new(HashMap::new()),
-            preview_cache: RefCell::new(HashMap::new()),
-            preview_pending: RefCell::new(HashSet::new()),
-            text_cache: RefCell::new(HashMap::new()),
-            text_pending: RefCell::new(HashSet::new()),
             hover_selection,
             pointer_position,
         }
@@ -438,11 +368,8 @@ impl Launcher {
         self.thumbnail_cache.borrow_mut().clear();
         self.thumbnail_pending.borrow_mut().clear();
         self.thumbnail_targets.borrow_mut().clear();
-        self.preview_cache.borrow_mut().clear();
-        self.preview_pending.borrow_mut().clear();
-        self.text_cache.borrow_mut().clear();
-        self.text_pending.borrow_mut().clear();
-        self.hide_preview();
+        self.preview.reset();
+        self.sync_preview_height();
         self.alphabetical = alphabetical;
         self.limit = limit;
         self.entry.set_placeholder_text(Some(prompt));
@@ -643,85 +570,35 @@ impl Launcher {
             return;
         };
         match item.visual {
-            Visual::Image => self.update_image_preview(&item.id),
-            Visual::Text => self.update_text_preview(&item.id),
-            Visual::None | Visual::Icon(_) => self.hide_preview(),
+            Visual::Image => self.preview.show_image(
+                &item.id,
+                self.source.borrow().as_ref(),
+                self.generation,
+                self.events.clone(),
+            ),
+            Visual::Text => self.preview.show_text(
+                &item.id,
+                self.source.borrow().as_ref(),
+                self.generation,
+                self.events.clone(),
+            ),
+            Visual::None | Visual::Icon(_) => self.preview.hide(),
         }
-    }
-
-    fn update_image_preview(&self, id: &str) {
-        self.show_preview(id, "image");
-        match self.preview_cache.borrow().get(id).cloned() {
-            Some(Some(texture)) => {
-                self.preview_picture.set_paintable(Some(&texture));
-                return;
-            }
-            Some(None) => {
-                self.show_preview_error(id);
-                return;
-            }
-            None => {}
-        }
-        self.preview_picture.set_paintable(gdk::Paintable::NONE);
-        if !self.preview_pending.borrow_mut().insert(id.to_string()) {
-            return;
-        }
-        if !self.source.borrow().request_image(
-            id,
-            ImageKind::Preview,
-            PREVIEW_WIDTH,
-            PREVIEW_HEIGHT,
-            self.generation,
-            self.events.clone(),
-        ) {
-            self.preview_pending.borrow_mut().remove(id);
-            self.preview_cache.borrow_mut().insert(id.to_string(), None);
-            self.show_preview_error(id);
-        }
-    }
-
-    fn update_text_preview(&self, id: &str) {
-        if let Some(text) = self.text_cache.borrow().get(id) {
-            if let Some(text) = text.as_deref().filter(|text| is_multiline(text)) {
-                self.preview_text.set_text(text);
-                self.show_preview(id, "text");
-            } else {
-                self.hide_preview();
-            }
-            return;
-        }
-        self.hide_preview();
-        self.preview_id.replace(Some(id.to_string()));
-        if self.text_pending.borrow_mut().insert(id.to_string()) {
-            let requested =
-                self.source
-                    .borrow()
-                    .request_text(id, self.generation, self.events.clone());
-            if !requested {
-                self.text_pending.borrow_mut().remove(id);
-                self.text_cache.borrow_mut().insert(id.to_string(), None);
-                self.hide_preview();
-            }
-        }
-    }
-
-    fn show_preview(&self, id: &str, child: &str) {
-        self.preview_id.replace(Some(id.to_string()));
-        self.preview_stack.set_visible_child_name(child);
-        self.preview_space.set_visible(true);
-        self.preview.set_visible(true);
-        self.results.set_height_request(PREVIEW_AREA_HEIGHT);
-    }
-
-    fn show_preview_error(&self, id: &str) {
-        self.show_preview(id, "message");
+        self.sync_preview_height();
     }
 
     fn hide_preview(&self) {
-        self.preview_id.take();
-        self.preview.set_visible(false);
-        self.preview_space.set_visible(false);
-        self.results.set_height_request(-1);
+        self.preview.hide();
+        self.sync_preview_height();
+    }
+
+    fn sync_preview_height(&self) {
+        self.results
+            .set_height_request(if self.preview.is_visible() {
+                PREVIEW_AREA_HEIGHT
+            } else {
+                -1
+            });
     }
 
     pub(super) fn image_loaded(
@@ -751,17 +628,8 @@ impl Launcher {
                 }
             }
             ImageKind::Preview => {
-                self.preview_pending.borrow_mut().remove(&id);
-                self.preview_cache
-                    .borrow_mut()
-                    .insert(id.clone(), texture.clone());
-                if self.preview_id.borrow().as_deref() == Some(id.as_str()) {
-                    if let Some(texture) = texture {
-                        self.preview_picture.set_paintable(Some(&texture));
-                    } else {
-                        self.show_preview_error(&id);
-                    }
-                }
+                self.preview.image_loaded(id, texture);
+                self.sync_preview_height();
             }
         }
     }
@@ -770,11 +638,8 @@ impl Launcher {
         if generation != self.generation {
             return;
         }
-        self.text_pending.borrow_mut().remove(&id);
-        self.text_cache.borrow_mut().insert(id.clone(), text);
-        if self.preview_id.borrow().as_deref() == Some(id.as_str()) {
-            self.update_text_preview(&id);
-        }
+        self.preview.text_loaded(id, text);
+        self.sync_preview_height();
     }
 
     pub(super) fn show_message(&self, text: &str, error: bool) {
@@ -848,10 +713,6 @@ fn pointer_moved_enough(previous: (f64, f64), current: (f64, f64)) -> bool {
     distance_squared >= POINTER_ACTIVATION_DISTANCE * POINTER_ACTIVATION_DISTANCE
 }
 
-fn is_multiline(text: &str) -> bool {
-    text.contains('\n') || text.contains('\r')
-}
-
 fn visible_row_range(value: f64, page_size: f64, count: usize) -> std::ops::Range<usize> {
     let start = ((value / f64::from(ROW_HEIGHT)).floor() as usize).min(count);
     let rows = if page_size > 0.0 {
@@ -879,13 +740,6 @@ mod tests {
         assert_eq!(visible_row_range(0.0, 0.0, 200), 0..10);
         assert_eq!(visible_row_range(88.0, 440.0, 200), 2..13);
         assert_eq!(visible_row_range(8_800.0, 440.0, 200), 200..200);
-    }
-
-    #[test]
-    fn previews_only_multiline_text() {
-        assert!(!is_multiline("one line"));
-        assert!(is_multiline("first\nsecond"));
-        assert!(is_multiline("first\r\nsecond"));
     }
 
     #[test]
