@@ -13,6 +13,7 @@ use view::{Bell, Center, Popups};
 pub struct Manager {
     snapshot: RefCell<Snapshot>,
     bell: RefCell<Option<Bell>>,
+    center_anchor: RefCell<Option<gtk::ApplicationWindow>>,
     center: RefCell<Option<Center>>,
     popups: RefCell<Option<Popups>>,
     daemon: RefCell<Option<daemon::Control>>,
@@ -23,6 +24,7 @@ impl Manager {
         Rc::new(Self {
             snapshot: RefCell::new(Snapshot::unavailable()),
             bell: RefCell::new(None),
+            center_anchor: RefCell::new(None),
             center: RefCell::new(None),
             popups: RefCell::new(None),
             daemon: RefCell::new(None),
@@ -77,6 +79,10 @@ impl Manager {
             .expect("bell was just constructed")
             .button
             .clone()
+    }
+
+    pub fn set_center_anchor(&self, anchor: &gtk::ApplicationWindow) {
+        self.center_anchor.replace(Some(anchor.clone()));
     }
 
     pub fn close(&self) {
@@ -139,11 +145,10 @@ impl Manager {
         }
         if self.center.borrow().is_none() {
             let anchor = self
-                .bell
+                .center_anchor
                 .borrow()
                 .as_ref()
-                .expect("the bar creates the bell before opening notifications")
-                .button
+                .expect("the bar creates the notification center anchor before opening it")
                 .clone();
             let center = Center::new(&anchor, self, self.daemon.borrow().is_some());
             center.update(&self.snapshot.borrow());
