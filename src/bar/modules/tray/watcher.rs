@@ -13,17 +13,21 @@ use zbus::{
     message::{Header, Type},
     names::BusName,
     object_server::SignalEmitter,
+    zvariant::{OwnedObjectPath, OwnedValue},
 };
 
-use super::model::{Event, Item, ItemId, select_pixmap, tooltip};
+use super::model::{Event, Item, ItemId, MenuItem, Toggle, ToggleKind, select_pixmap, tooltip};
 use crate::background;
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
 const WATCHER_PATH: &str = "/StatusNotifierWatcher";
 const WATCHER_INTERFACE: &str = "org.kde.StatusNotifierWatcher";
 const ITEM_INTERFACE: &str = "org.kde.StatusNotifierItem";
+const MENU_INTERFACE: &str = "com.canonical.dbusmenu";
 const DBUS_SERVICE: &str = "org.freedesktop.DBus";
 const DBUS_INTERFACE: &str = "org.freedesktop.DBus";
+
+type MenuLayout = (i32, HashMap<String, OwnedValue>, Vec<OwnedValue>);
 
 #[derive(Clone, Default)]
 pub(super) struct SharedConnection(Arc<Mutex<Option<Connection>>>);
@@ -768,7 +772,106 @@ fn load_item(connection: &Connection, id: &ItemId) -> zbus::Result<Item> {
         icon_name,
         pixmap: select_pixmap(pixmaps),
         item_is_menu: proxy.get_property("ItemIsMenu").unwrap_or(false),
+        menu_path: proxy
+            .get_property::<OwnedObjectPath>("Menu")
+            .ok()
+            .map(|path| path.to_string()),
     })
+}
+
+pub(super) fn request_menu(
+    shared: &SharedConnection,
+    id: &ItemId,
+    path: &str,
+    menus: async_channel::Sender<Vec<MenuItem>>,
+) {
+    let shared = shared.clone();
+    let id = id.clone();
+    let path = path.to_string();
+    background::spawn("tray-menu", move || {
+        let Some(connection) = shared.get() else {
+            return;
+        };
+        let Ok(menu) = load_menu(&connection, &id, &path) else {
+            return;
+        };
+        let _ = menus.send_blocking(menu);
+    });
+}
+
+fn load_menu(connection: &Connection, id: &ItemId, path: &str) -> zbus::Result<Vec<MenuItem>> {
+    let proxy = Proxy::new(connection, id.service.as_str(), path, MENU_INTERFACE)?;
+    let _ = proxy.call::<_, _, bool>("AboutToShow", &0_i32);
+    let properties = vec![
+        "type",
+        "label",
+        "enabled",
+        "visible",
+        "icon-name",
+        "toggle-type",
+        "toggle-state",
+        "children-display",
+    ];
+    let (_, root): (u32, MenuLayout) = proxy.call("GetLayout", &(0_i32, -1_i32, properties))?;
+    Ok(parse_menu(root).children)
+}
+
+fn parse_menu((id, properties, children): MenuLayout) -> MenuItem {
+    let string = |name| {
+        properties
+            .get(name)
+            .and_then(|value| <&str>::try_from(value).ok())
+    };
+    let boolean = |name, default| {
+        properties
+            .get(name)
+            .and_then(|value| bool::try_from(value).ok())
+            .unwrap_or(default)
+    };
+    let toggle = string("toggle-type").and_then(|kind| {
+        let kind = match kind {
+            "checkmark" => ToggleKind::Checkmark,
+            "radio" => ToggleKind::Radio,
+            _ => return None,
+        };
+        let active = properties
+            .get("toggle-state")
+            .and_then(|value| i32::try_from(value).ok())
+            .is_some_and(|state| state > 0);
+        Some(Toggle { kind, active })
+    });
+    MenuItem {
+        id,
+        label: string("label").unwrap_or_default().to_string(),
+        enabled: boolean("enabled", true),
+        visible: boolean("visible", true),
+        separator: string("type") == Some("separator"),
+        icon_name: string("icon-name")
+            .filter(|name| !name.is_empty())
+            .map(str::to_string),
+        toggle,
+        children: children
+            .into_iter()
+            .filter_map(|child| child.try_into().ok())
+            .map(parse_menu)
+            .collect(),
+    }
+}
+
+pub(super) fn call_menu_item(shared: &SharedConnection, id: &ItemId, path: &str, item: i32) {
+    let shared = shared.clone();
+    let id = id.clone();
+    let path = path.to_string();
+    background::spawn("tray-menu-item", move || {
+        let Some(connection) = shared.get() else {
+            return;
+        };
+        let Ok(proxy) = Proxy::new(&connection, id.service.as_str(), path, MENU_INTERFACE) else {
+            return;
+        };
+        let event = (item, "clicked", OwnedValue::from(0_i32), 0_u32);
+        let _ = proxy.call_noreply("Event", &event);
+    });
 }
 
 pub(super) fn call_item(
@@ -822,6 +925,77 @@ pub(super) fn call_scroll(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn string_value(value: &str) -> OwnedValue {
+        OwnedValue::from(zbus::zvariant::Str::from(value))
+    }
+
+    fn layout_value(
+        id: i32,
+        properties: HashMap<String, OwnedValue>,
+        children: Vec<OwnedValue>,
+    ) -> OwnedValue {
+        OwnedValue::try_from(zbus::zvariant::Value::Structure(
+            (id, properties, children).into(),
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn parses_recursive_dbus_menu_layouts() {
+        let child = layout_value(
+            7,
+            HashMap::from([
+                ("label".into(), string_value("_Enabled")),
+                ("toggle-type".into(), string_value("checkmark")),
+                ("toggle-state".into(), OwnedValue::from(1_i32)),
+            ]),
+            Vec::new(),
+        );
+        let separator = layout_value(
+            8,
+            HashMap::from([("type".into(), string_value("separator"))]),
+            Vec::new(),
+        );
+
+        let menu = parse_menu((0, HashMap::new(), vec![child, separator]));
+
+        assert_eq!(menu.children.len(), 2);
+        assert_eq!(
+            menu.children[0],
+            MenuItem {
+                id: 7,
+                label: "_Enabled".into(),
+                enabled: true,
+                visible: true,
+                separator: false,
+                icon_name: None,
+                toggle: Some(Toggle {
+                    kind: ToggleKind::Checkmark,
+                    active: true,
+                }),
+                children: Vec::new(),
+            }
+        );
+        assert!(menu.children[1].separator);
+    }
+
+    #[test]
+    fn respects_hidden_and_disabled_menu_properties() {
+        let menu = parse_menu((
+            4,
+            HashMap::from([
+                ("visible".into(), OwnedValue::from(false)),
+                ("enabled".into(), OwnedValue::from(false)),
+                ("icon-name".into(), string_value("document-open-symbolic")),
+            ]),
+            Vec::new(),
+        ));
+
+        assert!(!menu.visible);
+        assert!(!menu.enabled);
+        assert_eq!(menu.icon_name.as_deref(), Some("document-open-symbolic"));
+    }
 
     #[test]
     fn distinguishes_owner_loss_from_replacement() {

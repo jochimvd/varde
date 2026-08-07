@@ -1,14 +1,17 @@
+use std::{cell::Cell, rc::Rc};
+
 use gtk::prelude::*;
 
 use super::{
-    model::{Event, ICON_SIZE, Item, scale_pixmap},
+    model::{Event, ICON_SIZE, Item, MenuItem, ToggleKind, scale_pixmap},
     watcher,
 };
 use crate::background;
 
 const ICON_GAP: i32 = 2;
+const MENU_OFFSET: i32 = 12;
 
-pub fn widget() -> gtk::Box {
+pub fn widget(menu_visibility: impl Fn(bool) + 'static) -> gtk::Box {
     let tray = gtk::Box::builder()
         .spacing(ICON_GAP)
         .valign(gtk::Align::Center)
@@ -18,6 +21,8 @@ pub fn widget() -> gtk::Box {
 
     let (sender, receiver) = async_channel::unbounded();
     let shared = watcher::SharedConnection::default();
+    let open_menus = Rc::new(Cell::new(0_u32));
+    let menu_visibility: Rc<dyn Fn(bool)> = Rc::new(menu_visibility);
     let watcher_connection = shared.clone();
     background::spawn("tray-watcher", move || {
         watcher::run(sender, watcher_connection)
@@ -25,10 +30,12 @@ pub fn widget() -> gtk::Box {
     background::listen(receiver, {
         let tray = tray.clone();
         let shared = shared.clone();
+        let open_menus = open_menus.clone();
+        let menu_visibility = menu_visibility.clone();
         let mut items = Vec::new();
         move |event| {
             apply_event(&mut items, event);
-            rebuild(&tray, &items, &shared);
+            rebuild(&tray, &items, &shared, &open_menus, &menu_visibility);
         }
     });
 
@@ -50,7 +57,13 @@ fn apply_event(items: &mut Vec<Item>, event: Event) {
     }
 }
 
-fn rebuild(tray: &gtk::Box, items: &[Item], shared: &watcher::SharedConnection) {
+fn rebuild(
+    tray: &gtk::Box,
+    items: &[Item],
+    shared: &watcher::SharedConnection,
+    open_menus: &Rc<Cell<u32>>,
+    menu_visibility: &Rc<dyn Fn(bool)>,
+) {
     while let Some(child) = tray.first_child() {
         tray.remove(&child);
     }
@@ -63,18 +76,53 @@ fn rebuild(tray: &gtk::Box, items: &[Item], shared: &watcher::SharedConnection) 
         target.set_tooltip_text(item.tooltip.as_deref());
         target.append(&icon(item));
 
+        let menu = gtk::Popover::builder()
+            .autohide(true)
+            .has_arrow(false)
+            .position(gtk::PositionType::Bottom)
+            .build();
+        menu.add_css_class("tray-menu");
+        menu.set_offset(0, MENU_OFFSET);
+        menu.set_parent(&target);
+        menu.connect_visible_notify({
+            let open_menus = open_menus.clone();
+            let menu_visibility = menu_visibility.clone();
+            let was_visible = Cell::new(false);
+            move |menu| {
+                let visible = menu.is_visible();
+                if was_visible.replace(visible) == visible {
+                    return;
+                }
+                let count = if visible {
+                    open_menus.get() + 1
+                } else {
+                    open_menus.get().saturating_sub(1)
+                };
+                open_menus.set(count);
+                menu_visibility(count > 0);
+            }
+        });
+        let (menu_sender, menu_receiver) = async_channel::unbounded();
+        background::listen(menu_receiver, {
+            let menu = menu.clone();
+            let shared = shared.clone();
+            let id = item.id.clone();
+            let path = item.menu_path.clone().unwrap_or_default();
+            move |items| show_menu(&menu, &shared, &id, &path, items)
+        });
+
         let id = item.id.clone();
         let shared_click = shared.clone();
         let item_is_menu = item.item_is_menu;
+        let menu_path = item.menu_path.clone();
         let click = gtk::GestureClick::new();
         click.set_button(0);
         click.connect_released(move |gesture, _, x, y| match gesture.current_button() {
-            1 if item_is_menu => watcher::call_item(
-                &shared_click,
-                &id,
-                "ContextMenu",
-                pointer_position(gesture, x, y),
-            ),
+            1 if item_is_menu => {
+                if let Some(path) = &menu_path {
+                    watcher::request_menu(&shared_click, &id, path, menu_sender.clone());
+                }
+            }
             1 => watcher::call_item(
                 &shared_click,
                 &id,
@@ -87,12 +135,11 @@ fn rebuild(tray: &gtk::Box, items: &[Item], shared: &watcher::SharedConnection) 
                 "SecondaryActivate",
                 pointer_position(gesture, x, y),
             ),
-            3 => watcher::call_item(
-                &shared_click,
-                &id,
-                "ContextMenu",
-                pointer_position(gesture, x, y),
-            ),
+            3 => {
+                if let Some(path) = &menu_path {
+                    watcher::request_menu(&shared_click, &id, path, menu_sender.clone());
+                }
+            }
             _ => {}
         });
         target.add_controller(click);
@@ -114,6 +161,114 @@ fn rebuild(tray: &gtk::Box, items: &[Item], shared: &watcher::SharedConnection) 
         target.add_controller(scroll);
         tray.append(&target);
     }
+}
+
+fn show_menu(
+    popover: &gtk::Popover,
+    shared: &watcher::SharedConnection,
+    id: &super::model::ItemId,
+    path: &str,
+    items: Vec<MenuItem>,
+) {
+    let content = menu_content(items, shared, id, path, popover);
+    if content.first_child().is_none() {
+        return;
+    }
+    popover.set_child(Some(&content));
+    popover.popup();
+}
+
+fn menu_content(
+    items: Vec<MenuItem>,
+    shared: &watcher::SharedConnection,
+    id: &super::model::ItemId,
+    path: &str,
+    root: &gtk::Popover,
+) -> gtk::Box {
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    for item in items.into_iter().filter(|item| item.visible) {
+        if item.separator {
+            content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        } else if item.children.is_empty() {
+            content.append(&menu_button(item, shared, id, path, root));
+        } else {
+            content.append(&submenu_button(item, shared, id, path, root));
+        }
+    }
+    content
+}
+
+fn menu_button(
+    item: MenuItem,
+    shared: &watcher::SharedConnection,
+    id: &super::model::ItemId,
+    path: &str,
+    root: &gtk::Popover,
+) -> gtk::Button {
+    let button = gtk::Button::builder().sensitive(item.enabled).build();
+    button.add_css_class("flat");
+    button.set_child(Some(&menu_row(&item, false)));
+    let shared = shared.clone();
+    let id = id.clone();
+    let path = path.to_string();
+    let root = root.clone();
+    button.connect_clicked(move |_| {
+        root.popdown();
+        watcher::call_menu_item(&shared, &id, &path, item.id);
+    });
+    button
+}
+
+fn submenu_button(
+    mut item: MenuItem,
+    shared: &watcher::SharedConnection,
+    id: &super::model::ItemId,
+    path: &str,
+    root: &gtk::Popover,
+) -> gtk::MenuButton {
+    let submenu = gtk::Popover::builder()
+        .autohide(true)
+        .has_arrow(false)
+        .position(gtk::PositionType::Right)
+        .build();
+    submenu.add_css_class("tray-menu");
+    let children = std::mem::take(&mut item.children);
+    submenu.set_child(Some(&menu_content(children, shared, id, path, root)));
+
+    let button = gtk::MenuButton::builder()
+        .sensitive(item.enabled)
+        .direction(gtk::ArrowType::Right)
+        .build();
+    button.add_css_class("flat");
+    button.set_child(Some(&menu_row(&item, true)));
+    button.set_popover(Some(&submenu));
+    button
+}
+
+fn menu_row(item: &MenuItem, submenu: bool) -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    if let Some(icon_name) = &item.icon_name {
+        row.append(&gtk::Image::from_icon_name(icon_name));
+    } else if let Some(toggle) = &item.toggle {
+        let icon = match (&toggle.kind, toggle.active) {
+            (ToggleKind::Checkmark, true) => "checkbox-checked-symbolic",
+            (ToggleKind::Radio, true) => "radio-checked-symbolic",
+            (ToggleKind::Checkmark, false) => "checkbox-symbolic",
+            (ToggleKind::Radio, false) => "radio-symbolic",
+        };
+        row.append(&gtk::Image::from_icon_name(icon));
+    }
+    let label = gtk::Label::builder()
+        .label(&item.label)
+        .use_underline(true)
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    row.append(&label);
+    if submenu {
+        row.append(&gtk::Image::from_icon_name("pan-end-symbolic"));
+    }
+    row
 }
 
 fn icon(item: &Item) -> gtk::Image {

@@ -1,3 +1,5 @@
+use std::{cell::Cell, rc::Rc, time::Duration};
+
 use gtk::prelude::*;
 use gtk4_layer_shell::LayerShell;
 
@@ -8,6 +10,7 @@ use modules::{connectivity, hyprland, services, system, tray};
 const HEIGHT: i32 = 32;
 const MODULE_GAP: i32 = 10;
 const TRAY_REVEAL_GAP: i32 = 10;
+const TRAY_RETRACT_DELAY: Duration = Duration::from_secs(1);
 const BAR_NAME: &str = "varde-bar";
 
 pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notifications::Manager>) {
@@ -46,7 +49,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     let system = system::widgets();
     let services = services::widgets();
     center.append(&system.center);
-    right.append(&tray_group(&services.idle, &tray::widget()));
+    right.append(&tray_group(&services.idle));
     right.append(&connectivity::bluetooth());
     right.append(&connectivity::network());
     right.append(&connectivity::audio());
@@ -60,13 +63,24 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     window.present();
 }
 
-fn tray_group(idle: &gtk::Button, tray: &gtk::Box) -> gtk::Overlay {
+fn tray_group(idle: &gtk::Button) -> gtk::Overlay {
     let revealer = gtk::Revealer::builder()
         .transition_duration(500)
         .transition_type(gtk::RevealerTransitionType::SlideLeft)
         .halign(gtk::Align::End)
-        .child(tray)
         .build();
+    let hovered = Rc::new(Cell::new(false));
+    let menu_open = Rc::new(Cell::new(false));
+    let tray = tray::widget({
+        let revealer = revealer.clone();
+        let hovered = hovered.clone();
+        let menu_open = menu_open.clone();
+        move |open| {
+            menu_open.set(open);
+            update_tray_reveal(&revealer, &hovered, &menu_open);
+        }
+    });
+    revealer.set_child(Some(&tray));
     idle.add_tick_callback({
         let revealer = revealer.clone();
         move |idle, _| {
@@ -87,11 +101,43 @@ fn tray_group(idle: &gtk::Button, tray: &gtk::Box) -> gtk::Overlay {
     let hover = gtk::EventControllerMotion::new();
     hover.connect_enter({
         let revealer = revealer.clone();
-        move |_, _, _| revealer.set_reveal_child(true)
+        let hovered = hovered.clone();
+        let menu_open = menu_open.clone();
+        move |_, _, _| {
+            hovered.set(true);
+            update_tray_reveal(&revealer, &hovered, &menu_open);
+        }
     });
-    hover.connect_leave(move |_| revealer.set_reveal_child(false));
+    hover.connect_leave({
+        let revealer = revealer.clone();
+        let hovered = hovered.clone();
+        let menu_open = menu_open.clone();
+        move |_| {
+            hovered.set(false);
+            update_tray_reveal(&revealer, &hovered, &menu_open);
+        }
+    });
     group.add_controller(hover);
     group
+}
+
+fn update_tray_reveal(
+    revealer: &gtk::Revealer,
+    hovered: &Rc<Cell<bool>>,
+    menu_open: &Rc<Cell<bool>>,
+) {
+    if hovered.get() || menu_open.get() {
+        revealer.set_reveal_child(true);
+        return;
+    }
+    let revealer = revealer.clone();
+    let hovered = hovered.clone();
+    let menu_open = menu_open.clone();
+    gtk::glib::timeout_add_local_once(TRAY_RETRACT_DELAY, move || {
+        if !hovered.get() && !menu_open.get() {
+            revealer.set_reveal_child(false);
+        }
+    });
 }
 
 fn constrained_layout(left: &gtk::Box, center: &gtk::Box, right: &gtk::Box) -> gtk::Box {
