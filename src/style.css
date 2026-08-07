@@ -204,13 +204,29 @@ window.launcher {
 }
 
 .launcher-results row:selected,
-.launcher-results row:hover {
+.launcher-results.pointer-selection row:hover {
     background: rgba(255, 255, 255, 0.08);
 }
 
 .launcher-row {
     min-height: 44px;
     padding: 0 10px;
+}
+
+.launcher-thumbnail {
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.launcher-preview {
+    padding: 10px;
+    box-shadow: inset 1px 0 rgba(255, 255, 255, 0.08);
+    background: rgba(0, 0, 0, 0.18);
+}
+
+.launcher-preview-message {
+    padding: 10px;
+    color: @critical_color;
 }
 
 .launcher-message {
