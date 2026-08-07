@@ -63,6 +63,31 @@ pub(super) struct Item {
     pub icon_name: String,
     pub pixmap: Option<Pixmap>,
     pub item_is_menu: bool,
+    pub menu_path: Option<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct MenuItem {
+    pub id: i32,
+    pub label: String,
+    pub enabled: bool,
+    pub visible: bool,
+    pub separator: bool,
+    pub icon_name: Option<String>,
+    pub toggle: Option<Toggle>,
+    pub children: Vec<MenuItem>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) struct Toggle {
+    pub kind: ToggleKind,
+    pub active: bool,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum ToggleKind {
+    Checkmark,
+    Radio,
 }
 
 pub(super) enum Event {
