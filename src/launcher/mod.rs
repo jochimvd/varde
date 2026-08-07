@@ -114,25 +114,12 @@ impl Manager {
             self.close();
             return;
         }
-        match mode {
-            Mode::Apps => self.show(
-                app,
-                mode,
-                source::apps(),
-                "Search",
-                true,
-                Some(RESULT_LIMIT),
-            ),
-            Mode::Clipboard => self.show(
-                app,
-                mode,
-                source::clipboard(),
-                "Clipboard",
-                false,
-                Some(RESULT_LIMIT),
-            ),
+        let (source, prompt, alphabetical) = match mode {
+            Mode::Apps => (source::apps(), "Search", true),
+            Mode::Clipboard => (source::clipboard(), "Clipboard", false),
             Mode::Dmenu => unreachable!(),
-        }
+        };
+        self.show(app, mode, source, prompt, alphabetical, Some(RESULT_LIMIT));
     }
 
     pub fn run_dmenu(

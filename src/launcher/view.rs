@@ -464,12 +464,14 @@ impl Launcher {
                     thumbnail.set_overflow(gtk::Overflow::Hidden);
                     thumbnail.add_css_class("launcher-thumbnail");
                     thumbnail.add_overlay(&image);
-                    if let Some(Some(texture)) = self.thumbnail_cache.borrow().get(&item.id) {
-                        image.set_paintable(Some(texture));
-                    } else if !self.thumbnail_cache.borrow().contains_key(&item.id) {
-                        self.thumbnail_targets
-                            .borrow_mut()
-                            .insert(item.id.clone(), image.downgrade());
+                    match self.thumbnail_cache.borrow().get(&item.id) {
+                        Some(Some(texture)) => image.set_paintable(Some(texture)),
+                        Some(None) => {}
+                        None => {
+                            self.thumbnail_targets
+                                .borrow_mut()
+                                .insert(item.id.clone(), image.downgrade());
+                        }
                     }
                     content.append(&thumbnail);
                 }
@@ -560,16 +562,16 @@ impl Launcher {
     }
 
     pub(super) fn update_preview(&self) {
-        let item = self
+        let item_index = self
             .list
             .selected_row()
-            .and_then(|row| self.visible.borrow().get(row.index() as usize).copied())
-            .and_then(|index| self.items.borrow().get(index).cloned());
-        let Some(item) = item else {
+            .and_then(|row| self.visible.borrow().get(row.index() as usize).copied());
+        let items = self.items.borrow();
+        let Some(item) = item_index.and_then(|index| items.get(index)) else {
             self.hide_preview();
             return;
         };
-        match item.visual {
+        match &item.visual {
             Visual::Image => self.preview.show_image(
                 &item.id,
                 self.source.borrow().as_ref(),
@@ -726,14 +728,6 @@ fn visible_row_range(value: f64, page_size: f64, count: usize) -> std::ops::Rang
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn result_height_is_one_to_ten_rows() {
-        let height = |count: usize| ROW_HEIGHT * count.clamp(1, VISIBLE_ROWS as usize) as i32;
-        assert_eq!(height(0), ROW_HEIGHT);
-        assert_eq!(height(4), ROW_HEIGHT * 4);
-        assert_eq!(height(20), ROW_HEIGHT * VISIBLE_ROWS);
-    }
 
     #[test]
     fn thumbnail_range_follows_the_scroll_viewport() {
