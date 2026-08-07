@@ -279,15 +279,11 @@ fn popup_widget(
     app_icon: Option<&gio::Icon>,
     notification: &super::model::Notification,
     manager: &std::rc::Weak<Manager>,
-) -> gtk::Box {
-    let card = gtk::Box::builder()
+) -> gtk::Button {
+    let card_content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
         .build();
-    card.add_css_class("notification-popup");
-    if notification.urgency.as_deref() == Some("critical") {
-        card.add_css_class("critical");
-    }
 
     let app_image = gtk::Image::builder().pixel_size(18).build();
     if let Some(icon) = app_icon {
@@ -307,7 +303,7 @@ fn popup_widget(
         .build();
     header.append(&app_image);
     header.append(&app);
-    card.append(&header);
+    card_content.append(&header);
 
     let content = gtk::Box::builder()
         .spacing(10)
@@ -351,28 +347,33 @@ fn popup_widget(
         text.append(&progress_bar(value));
     }
     content.append(&text);
-    card.append(&content);
+    card_content.append(&content);
 
-    let activate = gtk::GestureClick::new();
-    activate.set_button(1);
-    activate.connect_released({
+    let card = gtk::Button::builder().child(&card_content).build();
+    card.add_css_class("notification-popup");
+    if notification.urgency.as_deref() == Some("critical") {
+        card.add_css_class("critical");
+    }
+    card.connect_clicked({
         let manager = manager.clone();
         let id = notification.id;
-        move |_, _, _, _| {
+        move |_| {
             if let Some(manager) = manager.upgrade() {
                 manager.invoke_default(id);
             }
         }
     });
-    card.add_controller(activate);
 
     let dismiss = gtk::GestureClick::new();
     dismiss.set_button(3);
     dismiss.connect_released({
+        let card = card.clone();
         let manager = manager.clone();
         let id = notification.id;
-        move |_, _, _, _| {
-            if let Some(manager) = manager.upgrade() {
+        move |_, _, x, y| {
+            if card.contains(x, y)
+                && let Some(manager) = manager.upgrade()
+            {
                 manager.dismiss(id, true);
             }
         }
@@ -660,10 +661,13 @@ impl GroupView {
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
             dismiss.connect_released({
+                let toggle = toggle.clone();
                 let manager = manager.clone();
                 let notifications = Rc::clone(&notifications);
-                move |_, _, _, _| {
-                    if let Some(manager) = manager.upgrade() {
+                move |_, _, x, y| {
+                    if toggle.contains(x, y)
+                        && let Some(manager) = manager.upgrade()
+                    {
                         manager.dismiss_group(notifications.borrow().clone());
                     }
                 }
@@ -729,7 +733,7 @@ impl GroupView {
 }
 
 struct RowView {
-    container: gtk::Box,
+    container: gtk::Button,
     summary: gtk::Label,
     time: gtk::Label,
     body: gtk::Label,
@@ -739,10 +743,9 @@ struct RowView {
 
 impl RowView {
     fn new(manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
-        let container = gtk::Box::builder()
+        let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
-        container.add_css_class("notification-row");
 
         let summary = gtk::Label::builder()
             .hexpand(true)
@@ -758,7 +761,7 @@ impl RowView {
             .build();
         header.append(&summary);
         header.append(&time);
-        container.append(&header);
+        content.append(&header);
 
         let body = gtk::Label::builder()
             .xalign(0.0)
@@ -768,31 +771,34 @@ impl RowView {
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         body.add_css_class("notification-body");
-        container.append(&body);
+        content.append(&body);
         let progress = progress_bar(0);
-        container.append(&progress);
+        content.append(&progress);
+
+        let container = gtk::Button::builder().child(&content).build();
+        container.add_css_class("notification-row");
 
         let target = Rc::new(Cell::new((0, false)));
         if interactive {
-            let activate = gtk::GestureClick::new();
-            activate.set_button(1);
-            activate.connect_released({
+            container.connect_clicked({
                 let manager = manager.clone();
                 let target = Rc::clone(&target);
-                move |_, _, _, _| {
+                move |_| {
                     if let Some(manager) = manager.upgrade() {
                         manager.invoke_default(target.get().0);
                     }
                 }
             });
-            container.add_controller(activate);
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
             dismiss.connect_released({
+                let container = container.clone();
                 let manager = manager.clone();
                 let target = Rc::clone(&target);
-                move |_, _, _, _| {
-                    if let Some(manager) = manager.upgrade() {
+                move |_, _, x, y| {
+                    if container.contains(x, y)
+                        && let Some(manager) = manager.upgrade()
+                    {
                         let (id, active) = target.get();
                         manager.dismiss(id, active);
                     }
