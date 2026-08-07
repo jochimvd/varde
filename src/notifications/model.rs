@@ -1,7 +1,5 @@
 use std::collections::{HashMap, HashSet};
 
-use serde::Deserialize;
-
 use super::state;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -57,42 +55,21 @@ pub(super) struct Group {
     pub notifications: Vec<Notification>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Notification {
     pub id: u32,
-    #[serde(default)]
     pub revision: u64,
-    #[serde(default)]
     pub received_at: Option<i64>,
-    #[serde(skip)]
     pub active: bool,
-    #[serde(default)]
     app_name: Option<String>,
-    #[serde(default)]
     pub app_icon: Option<String>,
-    #[serde(default)]
     pub image: Option<String>,
-    #[serde(skip)]
     pub image_data: Option<state::ImageData>,
-    #[serde(default)]
     pub progress: Option<u8>,
-    #[serde(default)]
     desktop_entry: Option<String>,
-    #[serde(default)]
     pub summary: String,
-    #[serde(default)]
     pub body: String,
-    #[serde(default)]
     pub urgency: Option<String>,
-}
-
-pub(super) fn parse(active: &[u8], history: &[u8], dnd: bool) -> Option<Snapshot> {
-    let mut active = serde_json::from_slice::<Vec<Notification>>(active).ok()?;
-    active
-        .iter_mut()
-        .for_each(|notification| notification.active = true);
-    let history = serde_json::from_slice::<Vec<Notification>>(history).ok()?;
-    Some(group(active.into_iter().chain(history), dnd))
 }
 
 pub(super) fn from_state(store: &state::Store) -> Snapshot {
@@ -189,21 +166,58 @@ fn nonempty(value: Option<&str>) -> Option<&str> {
 }
 
 #[cfg(test)]
+pub(super) fn test_snapshot(notifications: &[(u32, u64)]) -> Snapshot {
+    group(
+        notifications
+            .iter()
+            .map(|&(id, revision)| notification(id, revision, None, None, true)),
+        false,
+    )
+}
+
+#[cfg(test)]
+fn notification(
+    id: u32,
+    revision: u64,
+    app_name: Option<&str>,
+    desktop_entry: Option<&str>,
+    active: bool,
+) -> Notification {
+    Notification {
+        id,
+        revision,
+        received_at: None,
+        active,
+        app_name: app_name.map(str::to_string),
+        app_icon: None,
+        image: None,
+        image_data: None,
+        progress: None,
+        desktop_entry: desktop_entry.map(str::to_string),
+        summary: String::new(),
+        body: String::new(),
+        urgency: None,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn groups_active_before_history_and_deduplicates_ids() {
-        let active = br#"[
-            {"id":2,"app_name":"Chat","summary":"Active"},
-            {"id":1,"app_name":"Mail","summary":"Mail"}
-        ]"#;
-        let history = br#"[
-            {"id":2,"app_name":"Chat","summary":"Duplicate"},
-            {"id":3,"app_name":"Chat","summary":"Older"}
-        ]"#;
-
-        let snapshot = parse(active, history, false).unwrap();
+        let mut active_chat = notification(2, 1, Some("Chat"), None, true);
+        active_chat.summary = "Active".into();
+        let snapshot = group(
+            [
+                active_chat,
+                notification(1, 1, Some("Mail"), None, true),
+                notification(2, 1, Some("Chat"), None, false),
+                notification(3, 1, Some("Chat"), None, false),
+            ]
+            .into_iter(),
+            false,
+        );
         assert_eq!(snapshot.count, 3);
         assert_eq!(snapshot.groups[0].name, "Chat");
         assert_eq!(snapshot.groups[0].notifications.len(), 2);
@@ -213,17 +227,16 @@ mod tests {
 
     #[test]
     fn uses_desktop_entry_then_name_then_other_for_identity() {
-        let snapshot = parse(
-            br#"[
-                {"id":1,"desktop_entry":"chat","app_name":"Chat"},
-                {"id":2,"desktop_entry":"chat","app_name":"Different label"},
-                {"id":3,"app_name":"Mail"},
-                {"id":4}
-            ]"#,
-            b"[]",
+        let snapshot = group(
+            [
+                notification(1, 1, Some("Chat"), Some("chat"), true),
+                notification(2, 1, Some("Different label"), Some("chat"), true),
+                notification(3, 1, Some("Mail"), None, true),
+                notification(4, 1, None, None, true),
+            ]
+            .into_iter(),
             false,
-        )
-        .unwrap();
+        );
 
         assert_eq!(snapshot.groups.len(), 3);
         assert_eq!(snapshot.groups[0].notifications.len(), 2);
@@ -236,21 +249,15 @@ mod tests {
         assert_eq!(Snapshot::empty(false).alt(), "none");
         assert_eq!(Snapshot::empty(true).alt(), "dnd-none");
 
-        let populated = parse(br#"[{"id":1}]"#, b"[]", true).unwrap();
+        let populated = group([notification(1, 1, None, None, true)].into_iter(), true);
         assert_eq!(populated.alt(), "dnd-notification");
         assert_eq!(populated.tooltip(), "Do Not Disturb — 1 notification(s)");
-        let history_only = parse(b"[]", br#"[{"id":1}]"#, false).unwrap();
+        let history_only = group([notification(1, 1, None, None, false)].into_iter(), false);
         assert_eq!(history_only.alt(), "notification");
         assert_eq!(history_only.tooltip(), "1 notification(s)");
         assert_eq!(
             Snapshot::unavailable().tooltip(),
             "Notifications unavailable"
         );
-    }
-
-    #[test]
-    fn rejects_malformed_snapshots() {
-        assert!(parse(b"not json", b"[]", false).is_none());
-        assert!(parse(b"[]", b"not json", false).is_none());
     }
 }

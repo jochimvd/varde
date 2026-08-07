@@ -63,9 +63,9 @@ relative application paths from writing into the Git worktree. Two processes
 cannot use the same session ID concurrently.
 
 The nested sessions share the live user D-Bus and host services so the tray,
-Mako notifications, idle inhibition, audio, network, and Bluetooth remain
-available. Interacting with those modules can therefore affect the live
-desktop.
+idle inhibition, audio, network, and Bluetooth remain available. Notifications
+use a private D-Bus session owned by the development session. Interacting with
+the shared modules can therefore affect the live desktop.
 
 ## Inspect and capture
 

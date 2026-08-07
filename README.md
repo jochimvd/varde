@@ -7,9 +7,9 @@ date and time, Bluetooth, network and audio state, CPU and memory usage,
 notifications, idle inhibition, privacy indicators, and a StatusNotifier tray.
 Its layout and behavior are defined directly in the Rust source.
 
-Mako remains responsible for notification popups. The bell opens a compact
-notification center backed by Mako's active list and history. It can also be
-opened as an application action:
+Varde implements the desktop notification service, floating popups, history,
+and notification center. The center can also be opened as an application
+action:
 
 ```sh
 gapplication action org.varde.desktop notifications
@@ -41,12 +41,12 @@ It reads the existing cliphist history, fuzzy-searches text and image metadata,
 loads visible image thumbnails in the background, and restores the selected
 entry to the Wayland clipboard.
 
-The current system requires GTK 4, gtk4-layer-shell, Hyprland, Mako, PipeWire,
+The current system requires GTK 4, gtk4-layer-shell, Hyprland, PipeWire,
 WirePlumber, iwd, BlueZ, iproute2, PulseAudio utilities, coreutils, `jq`, `grim`,
 and JetBrains Mono Nerd Font. Clipboard history requires `cliphist`, `wl-copy`,
 and an existing `wl-paste --watch cliphist store` process. The bar's actions
 use `hyprctl`, `wpctl`, `pactl`, `ip`, `iwctl`, `bluetoothctl`, `pw-dump`,
-`makoctl`, `dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
+`dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
 `btop`, and the terminal named by `$TERMINAL`.
 
 ## Development workflow
@@ -113,9 +113,8 @@ ID explicitly.
 The nested compositor has its own config, Hyprland instance signature,
 Wayland socket, and output. Inspection and screenshots target those nested
 identifiers. `HYPRLAND_NO_SD_VARS=1` prevents the test compositor from
-exporting its environment into the live user session. It also sets
-`VARDE_DEVELOPMENT=1` to show the module alignment guides; normal launches do
-not show them. The sessions intentionally retain access to the live user D-Bus
+exporting its environment into the live user session. The sessions
+intentionally retain access to the live user D-Bus
 and system services, so notification, tray, idle, audio, network, and Bluetooth
 interactions can affect the live desktop.
 
