@@ -26,9 +26,6 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
         .height_request(HEIGHT)
         .build();
     window.add_css_class("bar");
-    if std::env::var_os("VARDE_DEVELOPMENT").is_some() {
-        window.add_css_class("development");
-    }
 
     window.init_layer_shell();
     window.set_namespace(Some("varde"));

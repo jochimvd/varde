@@ -27,19 +27,6 @@ window.bar label {
 }
 
 /* Development alignment guides. Inset shadows do not affect widget sizing. */
-.development .workspaces { box-shadow: inset 0 0 0 1px #00E5FF; }
-.development .window { box-shadow: inset 0 0 0 1px #FF9800; }
-.development .clock.date { box-shadow: inset 0 0 0 1px #E040FB; }
-.development .clock.time { box-shadow: inset 0 0 0 1px #7C4DFF; }
-.development .idle-inhibitor { box-shadow: inset 0 0 0 1px #00BCD4; }
-.development .tray { box-shadow: inset 0 0 0 1px #2979FF; }
-.development .bluetooth { box-shadow: inset 0 0 0 1px #651FFF; }
-.development .network { box-shadow: inset 0 0 0 1px #00E676; }
-.development .audio { box-shadow: inset 0 0 0 1px #FF9100; }
-.development .cpu { box-shadow: inset 0 0 0 1px #FF1744; }
-.development .memory { box-shadow: inset 0 0 0 1px #FFEA00; }
-.development .battery { box-shadow: inset 0 0 0 1px #76FF03; }
-.development .notification { box-shadow: inset 0 0 0 1px #F50057; }
 .notification-dot {
     min-width: 5px;
     min-height: 5px;
@@ -47,7 +34,6 @@ window.bar label {
     background: @accent_color;
     box-shadow: 0 0 0 2px @secondary_color;
 }
-.development .privacy { box-shadow: inset 0 0 0 1px #1DE9B6; }
 
 .region.left {
     margin-left: 10px;

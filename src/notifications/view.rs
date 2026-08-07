@@ -40,19 +40,9 @@ mod tests {
 
     #[test]
     fn replacements_update_visible_popups_without_resurfacing_hidden_ones() {
-        let first = super::super::model::parse(
-            br#"[{"id":1,"revision":1,"app_name":"Test","summary":"Same"}]"#,
-            b"[]",
-            false,
-        )
-        .unwrap();
-        let replaced = super::super::model::parse(
-            br#"[{"id":1,"revision":2,"app_name":"Test","summary":"Same"}]"#,
-            b"[]",
-            false,
-        )
-        .unwrap();
-        let empty = super::super::model::parse(b"[]", b"[]", false).unwrap();
+        let first = super::super::model::test_snapshot(&[(1, 1)]);
+        let replaced = super::super::model::test_snapshot(&[(1, 2)]);
+        let empty = super::super::model::test_snapshot(&[]);
         let mut state = PopupState::default();
 
         assert_eq!(state.update(&first, false), vec![(1, 1)]);
@@ -73,31 +63,21 @@ mod tests {
 
     #[test]
     fn blocked_and_queued_notifications_wait_until_they_can_be_displayed() {
-        let json = (1..=MAX_POPUPS + 1)
-            .map(|id| format!(r#"{{"id":{id},"revision":1,"summary":"{id}"}}"#))
-            .collect::<Vec<_>>()
-            .join(",");
-        let snapshot =
-            super::super::model::parse(format!("[{json}]").as_bytes(), b"[]", false).unwrap();
+        let notifications = (1..=MAX_POPUPS as u32 + 1)
+            .map(|id| (id, 1))
+            .collect::<Vec<_>>();
+        let snapshot = super::super::model::test_snapshot(&notifications);
         let mut state = PopupState::default();
 
         assert!(state.update(&snapshot, true).is_empty());
         assert_eq!(state.update(&snapshot, false).len(), MAX_POPUPS);
         let first = *state.visible.iter().next().unwrap();
-        let reduced = super::super::model::parse(
-            format!(
-                "[{}]",
-                (1..=MAX_POPUPS + 1)
-                    .filter(|id| *id != first as usize)
-                    .map(|id| format!(r#"{{"id":{id},"revision":1,"summary":"{id}"}}"#))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            )
-            .as_bytes(),
-            b"[]",
-            false,
-        )
-        .unwrap();
+        let reduced = super::super::model::test_snapshot(
+            &notifications
+                .into_iter()
+                .filter(|(id, _)| *id != first)
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(state.update(&reduced, false).len(), 1);
     }
 }
