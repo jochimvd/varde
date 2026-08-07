@@ -49,11 +49,6 @@ enum CommandRequest {
     },
 }
 
-struct ImageMetadata<'a> {
-    format: &'a str,
-    dimensions: &'a str,
-}
-
 impl Clipboard {
     pub fn new() -> Self {
         let (previews, preview_receiver) = async_channel::unbounded();
@@ -158,21 +153,15 @@ fn parse_line(line: &str) -> Option<LoadedItem> {
     let (id, preview) = line.split_once('\t')?;
     id.parse::<u64>().ok()?;
 
-    if let Some(image) = image_metadata(preview) {
+    if let Some(dimensions) = image_dimensions(preview) {
         return Some(LoadedItem {
             id: id.to_string(),
-            title: format!("Image · {}", image.dimensions.replace('x', "×")),
+            title: format!("Image · {}", dimensions.replace('x', "×")),
             visual: LoadedVisual::Image,
-            search_terms: vec![
-                "image".into(),
-                image.format.into(),
-                image.dimensions.into(),
-                preview.into(),
-            ],
+            search_terms: vec!["image".into(), preview.into()],
         });
     }
 
-    let binary = preview.starts_with("[[ binary data ");
     Some(LoadedItem {
         id: id.to_string(),
         title: if preview.is_empty() {
@@ -180,32 +169,31 @@ fn parse_line(line: &str) -> Option<LoadedItem> {
         } else {
             preview.into()
         },
-        visual: if binary {
+        visual: if preview.starts_with("[[ binary data ") {
             LoadedVisual::None
         } else {
             LoadedVisual::Text
         },
-        search_terms: binary.then(|| "binary data".into()).into_iter().collect(),
+        search_terms: Vec::new(),
     })
 }
 
-fn image_metadata(preview: &str) -> Option<ImageMetadata<'_>> {
+fn image_dimensions(preview: &str) -> Option<&str> {
     let content = preview
         .strip_prefix("[[ binary data ")?
         .strip_suffix(" ]]")?;
-    let parts = content.split_whitespace().collect::<Vec<_>>();
-    let dimensions_index = parts
-        .iter()
-        .position(|part| parse_dimensions(part).is_some())?;
-    let format = *parts.get(dimensions_index.checked_sub(1)?)?;
-    matches!(
-        format.to_ascii_lowercase().as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tif" | "tiff"
-    )
-    .then_some(ImageMetadata {
-        format,
-        dimensions: parts[dimensions_index],
-    })
+    let mut previous: Option<&str> = None;
+    for dimensions in content.split_whitespace() {
+        if parse_dimensions(dimensions).is_some() {
+            let format = previous?;
+            return ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]
+                .iter()
+                .any(|supported| format.eq_ignore_ascii_case(supported))
+                .then_some(dimensions);
+        }
+        previous = Some(dimensions);
+    }
+    None
 }
 
 fn parse_dimensions(value: &str) -> Option<(i32, i32)> {
@@ -426,10 +414,10 @@ mod tests {
 
     #[test]
     fn recognizes_supported_image_metadata() {
-        let image = image_metadata("[[ binary data 2 MiB jpeg 1920x1080 ]]").unwrap();
-        assert_eq!(image.format, "jpeg");
-        assert_eq!(parse_dimensions(image.dimensions), Some((1920, 1080)));
-        assert!(image_metadata("[[ binary data 2 KiB pdf ]]").is_none());
+        let dimensions = image_dimensions("[[ binary data 2 MiB jpeg 1920x1080 ]]").unwrap();
+        assert_eq!(parse_dimensions(dimensions), Some((1920, 1080)));
+        assert!(image_dimensions("[[ binary data 2 MiB JPEG 1920x1080 ]]").is_some());
+        assert!(image_dimensions("[[ binary data 2 KiB pdf ]]").is_none());
     }
 
     #[test]
