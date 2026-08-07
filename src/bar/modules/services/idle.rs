@@ -20,6 +20,14 @@ pub fn widget() -> gtk::Button {
     // The screensaver owner may be slow to activate, so never toggle on the main thread.
     background::spawn("idle-inhibitor", move || {
         let mut state = IdleInhibitor::default();
+        let result = state.activate();
+        if results
+            .send_blocking((state.cookie.is_some(), result.err()))
+            .is_err()
+        {
+            return;
+        }
+
         while requests.recv_blocking().is_ok() {
             let result = if state.cookie.is_some() {
                 state.deactivate()
