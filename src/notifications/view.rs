@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     path::Path,
     rc::Rc,
@@ -384,6 +384,7 @@ fn popup_widget(
 pub(super) struct Center {
     popover: gtk::Popover,
     groups: gtk::Box,
+    group_views: RefCell<Vec<GroupView>>,
     stack: gtk::Stack,
     dnd: gtk::Button,
     clear: gtk::Button,
@@ -502,6 +503,7 @@ impl Center {
         Self {
             popover,
             groups,
+            group_views: RefCell::new(Vec::new()),
             stack,
             dnd,
             clear,
@@ -515,17 +517,24 @@ impl Center {
         self.collapsed
             .borrow_mut()
             .retain(|key| snapshot.groups.iter().any(|group| group.key == *key));
-        while let Some(child) = self.groups.first_child() {
-            self.groups.remove(&child);
-        }
-        for group in &snapshot.groups {
-            self.groups.append(&group_widget(
-                group,
+
+        let mut views = self.group_views.borrow_mut();
+        while views.len() < snapshot.groups.len() {
+            let view = GroupView::new(
                 &self.collapsed,
                 &self.popover,
                 &self.manager,
                 self.interactive,
-            ));
+            );
+            self.groups.append(&view.container);
+            views.push(view);
+        }
+        for (view, group) in views.iter_mut().zip(&snapshot.groups) {
+            view.update(group);
+        }
+        while views.len() > snapshot.groups.len() {
+            let view = views.pop().expect("group view count exceeds snapshot");
+            self.groups.remove(&view.container);
         }
         self.stack.set_visible_child_name(if !snapshot.available {
             "unavailable"
@@ -559,180 +568,270 @@ impl Center {
     }
 }
 
-fn group_widget(
-    group: &super::model::Group,
-    collapsed: &Rc<RefCell<HashSet<String>>>,
-    popover: &gtk::Popover,
-    manager: &std::rc::Weak<Manager>,
+struct GroupView {
+    container: gtk::Box,
+    image: gtk::Image,
+    name: gtk::Label,
+    count: gtk::Label,
+    disclosure: gtk::Label,
+    rows: gtk::Box,
+    revealer: gtk::Revealer,
+    row_views: Vec<RowView>,
+    key: Rc<RefCell<String>>,
+    notifications: Rc<RefCell<Vec<(u32, bool)>>>,
+    collapsed: Rc<RefCell<HashSet<String>>>,
+    manager: std::rc::Weak<Manager>,
     interactive: bool,
-) -> gtk::Box {
-    let container = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-    container.add_css_class("notification-group");
+}
 
-    let (name, icon) = application(group);
-    let image = gtk::Image::builder().pixel_size(20).build();
-    if let Some(icon) = icon {
-        image.set_from_gicon(&icon);
-    }
-    image.add_css_class("notification-group-icon");
-    let name = gtk::Label::builder()
-        .label(name)
-        .hexpand(true)
-        .xalign(0.0)
-        .ellipsize(gtk::pango::EllipsizeMode::End)
-        .build();
-    let count = gtk::Label::builder()
-        .label(group.notifications.len().to_string())
-        .valign(gtk::Align::Center)
-        .build();
-    count.add_css_class("notification-group-count");
-    let disclosure = gtk::Label::new(None);
-    disclosure.add_css_class("notification-group-disclosure");
-    let header = gtk::Box::builder()
-        .spacing(8)
-        .valign(gtk::Align::Center)
-        .build();
-    header.add_css_class("notification-group-header");
-    header.append(&image);
-    header.append(&name);
-    header.append(&count);
-    header.append(&disclosure);
-
-    let rows = gtk::Box::builder()
-        .orientation(gtk::Orientation::Vertical)
-        .build();
-
-    for notification in &group.notifications {
-        let row = gtk::Box::builder()
+impl GroupView {
+    fn new(
+        collapsed: &Rc<RefCell<HashSet<String>>>,
+        popover: &gtk::Popover,
+        manager: &std::rc::Weak<Manager>,
+        interactive: bool,
+    ) -> Self {
+        let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
-        row.add_css_class("notification-row");
-        if notification.urgency.as_deref() == Some("critical") {
-            row.add_css_class("critical");
+        container.add_css_class("notification-group");
+
+        let image = gtk::Image::builder().pixel_size(20).build();
+        image.add_css_class("notification-group-icon");
+        let name = gtk::Label::builder()
+            .hexpand(true)
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        let count = gtk::Label::builder().valign(gtk::Align::Center).build();
+        count.add_css_class("notification-group-count");
+        let disclosure = gtk::Label::new(None);
+        disclosure.add_css_class("notification-group-disclosure");
+        let header = gtk::Box::builder()
+            .spacing(8)
+            .valign(gtk::Align::Center)
+            .build();
+        header.add_css_class("notification-group-header");
+        header.append(&image);
+        header.append(&name);
+        header.append(&count);
+        header.append(&disclosure);
+
+        let rows = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .build();
+        let revealer = gtk::Revealer::builder()
+            .transition_duration(150)
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .child(&rows)
+            .build();
+
+        let key = Rc::new(RefCell::new(String::new()));
+        let notifications = Rc::new(RefCell::new(Vec::new()));
+        let toggle = gtk::Button::builder()
+            .focusable(false)
+            .hexpand(true)
+            .child(&header)
+            .build();
+        toggle.add_css_class("notification-group-toggle");
+        toggle.connect_clicked({
+            let collapsed = Rc::clone(collapsed);
+            let key = Rc::clone(&key);
+            let revealer = revealer.clone();
+            let disclosure = disclosure.clone();
+            let popover = popover.clone();
+            move |_| {
+                let reveal = !revealer.reveals_child();
+                revealer.set_reveal_child(reveal);
+                disclosure.set_text(if reveal { "▾" } else { "▸" });
+                let key = key.borrow().clone();
+                if reveal {
+                    collapsed.borrow_mut().remove(&key);
+                } else {
+                    collapsed.borrow_mut().insert(key);
+                }
+                glib::timeout_add_local_once(Duration::from_millis(160), {
+                    let popover = popover.clone();
+                    move || popover.queue_resize()
+                });
+            }
+        });
+        if interactive {
+            let dismiss = gtk::GestureClick::new();
+            dismiss.set_button(3);
+            dismiss.connect_released({
+                let manager = manager.clone();
+                let notifications = Rc::clone(&notifications);
+                move |_, _, _, _| {
+                    if let Some(manager) = manager.upgrade() {
+                        manager.dismiss_group(notifications.borrow().clone());
+                    }
+                }
+            });
+            toggle.add_controller(dismiss);
         }
+
+        container.append(&toggle);
+        container.append(&revealer);
+        Self {
+            container,
+            image,
+            name,
+            count,
+            disclosure,
+            rows,
+            revealer,
+            row_views: Vec::new(),
+            key,
+            notifications,
+            collapsed: Rc::clone(collapsed),
+            manager: manager.clone(),
+            interactive,
+        }
+    }
+
+    fn update(&mut self, group: &super::model::Group) {
+        let (name, icon) = application(group);
+        self.image.clear();
+        if let Some(icon) = icon {
+            self.image.set_from_gicon(&icon);
+        }
+        self.name.set_label(&name);
+        self.count.set_label(&group.notifications.len().to_string());
+        self.key.replace(group.key.clone());
+        self.notifications.replace(
+            group
+                .notifications
+                .iter()
+                .map(|notification| (notification.id, notification.active))
+                .collect(),
+        );
+
+        let is_collapsed = self.collapsed.borrow().contains(&group.key);
+
+        while self.row_views.len() < group.notifications.len() {
+            let view = RowView::new(&self.manager, self.interactive);
+            self.rows.append(&view.container);
+            self.row_views.push(view);
+        }
+        for (view, notification) in self.row_views.iter().zip(&group.notifications) {
+            view.update(notification);
+        }
+        while self.row_views.len() > group.notifications.len() {
+            let view = self.row_views.pop().expect("row view count exceeds group");
+            self.rows.remove(&view.container);
+        }
+
+        self.revealer.set_reveal_child(!is_collapsed);
+        self.disclosure
+            .set_text(if is_collapsed { "▸" } else { "▾" });
+    }
+}
+
+struct RowView {
+    container: gtk::Box,
+    summary: gtk::Label,
+    time: gtk::Label,
+    body: gtk::Label,
+    progress: gtk::ProgressBar,
+    target: Rc<Cell<(u32, bool)>>,
+}
+
+impl RowView {
+    fn new(manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
+        let container = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .build();
+        container.add_css_class("notification-row");
+
         let summary = gtk::Label::builder()
-            .label(&notification.summary)
             .hexpand(true)
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         summary.add_css_class("notification-summary");
+        let time = gtk::Label::new(None);
+        time.add_css_class("notification-time");
         let header = gtk::Box::builder()
             .spacing(8)
             .valign(gtk::Align::Center)
             .build();
         header.append(&summary);
-        if let Some(time) = notification_time(notification.received_at) {
-            let time = gtk::Label::new(Some(&time));
-            time.add_css_class("notification-time");
-            header.append(&time);
-        }
-        row.append(&header);
-        if !notification.body.trim().is_empty() {
-            let body = gtk::Label::builder()
-                .label(&notification.body)
-                .xalign(0.0)
-                .wrap(true)
-                .wrap_mode(gtk::pango::WrapMode::WordChar)
-                .lines(3)
-                .ellipsize(gtk::pango::EllipsizeMode::End)
-                .build();
-            body.add_css_class("notification-body");
-            row.append(&body);
-        }
-        if let Some(value) = notification.progress {
-            row.append(&progress_bar(value));
-        }
+        header.append(&time);
+        container.append(&header);
+
+        let body = gtk::Label::builder()
+            .xalign(0.0)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .lines(3)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        body.add_css_class("notification-body");
+        container.append(&body);
+        let progress = progress_bar(0);
+        container.append(&progress);
+
+        let target = Rc::new(Cell::new((0, false)));
         if interactive {
             let activate = gtk::GestureClick::new();
             activate.set_button(1);
             activate.connect_released({
                 let manager = manager.clone();
-                let id = notification.id;
+                let target = Rc::clone(&target);
                 move |_, _, _, _| {
                     if let Some(manager) = manager.upgrade() {
-                        manager.invoke_default(id);
+                        manager.invoke_default(target.get().0);
                     }
                 }
             });
-            row.add_controller(activate);
+            container.add_controller(activate);
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
             dismiss.connect_released({
                 let manager = manager.clone();
-                let id = notification.id;
-                let active = notification.active;
+                let target = Rc::clone(&target);
                 move |_, _, _, _| {
                     if let Some(manager) = manager.upgrade() {
+                        let (id, active) = target.get();
                         manager.dismiss(id, active);
                     }
                 }
             });
-            row.add_controller(dismiss);
+            container.add_controller(dismiss);
         }
-        rows.append(&row);
+
+        Self {
+            container,
+            summary,
+            time,
+            body,
+            progress,
+            target,
+        }
     }
 
-    let is_collapsed = collapsed.borrow().contains(&group.key);
-    disclosure.set_text(if is_collapsed { "▸" } else { "▾" });
-    let revealer = gtk::Revealer::builder()
-        .transition_duration(150)
-        .transition_type(gtk::RevealerTransitionType::SlideDown)
-        .reveal_child(!is_collapsed)
-        .child(&rows)
-        .build();
-
-    let toggle = gtk::Button::builder()
-        .focusable(false)
-        .hexpand(true)
-        .child(&header)
-        .build();
-    toggle.add_css_class("notification-group-toggle");
-    toggle.connect_clicked({
-        let collapsed = Rc::clone(collapsed);
-        let key = group.key.clone();
-        let revealer = revealer.clone();
-        let popover = popover.clone();
-        move |_| {
-            let reveal = !revealer.reveals_child();
-            revealer.set_reveal_child(reveal);
-            disclosure.set_text(if reveal { "▾" } else { "▸" });
-            if reveal {
-                collapsed.borrow_mut().remove(&key);
-            } else {
-                collapsed.borrow_mut().insert(key.clone());
-            }
-            glib::timeout_add_local_once(Duration::from_millis(160), {
-                let popover = popover.clone();
-                move || {
-                    popover.queue_resize();
-                }
-            });
+    fn update(&self, notification: &super::model::Notification) {
+        self.target.set((notification.id, notification.active));
+        if notification.urgency.as_deref() == Some("critical") {
+            self.container.add_css_class("critical");
+        } else {
+            self.container.remove_css_class("critical");
         }
-    });
-    if interactive {
-        let dismiss = gtk::GestureClick::new();
-        dismiss.set_button(3);
-        dismiss.connect_released({
-            let manager = manager.clone();
-            let notifications = group
-                .notifications
-                .iter()
-                .map(|notification| (notification.id, notification.active))
-                .collect::<Vec<_>>();
-            move |_, _, _, _| {
-                if let Some(manager) = manager.upgrade() {
-                    manager.dismiss_group(notifications.clone());
-                }
-            }
-        });
-        toggle.add_controller(dismiss);
+        self.summary.set_label(&notification.summary);
+
+        let time = notification_time(notification.received_at);
+        self.time.set_label(time.as_deref().unwrap_or_default());
+        self.time.set_visible(time.is_some());
+
+        let body = notification.body.trim();
+        self.body.set_label(&notification.body);
+        self.body.set_visible(!body.is_empty());
+
+        self.progress
+            .set_fraction(f64::from(notification.progress.unwrap_or_default()) / 100.0);
+        self.progress.set_visible(notification.progress.is_some());
     }
-    container.append(&toggle);
-    container.append(&revealer);
-    container
 }
 
 fn application(group: &super::model::Group) -> (String, Option<gio::Icon>) {
