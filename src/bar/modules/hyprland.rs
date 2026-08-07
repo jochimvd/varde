@@ -97,7 +97,13 @@ struct ClientWorkspace {
 }
 
 enum Command {
-    Activate(i64),
+    Activate(WorkspaceSelector),
+}
+
+#[derive(Clone)]
+enum WorkspaceSelector {
+    Id(i64),
+    Name(String),
 }
 
 fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &Sender<Command>) {
@@ -115,9 +121,13 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &
         }
 
         let commands = commands.clone();
-        let id = workspace.id;
+        let selector = if workspace.id > 0 {
+            WorkspaceSelector::Id(workspace.id)
+        } else {
+            WorkspaceSelector::Name(workspace.name.clone())
+        };
         button.connect_clicked(move |_| {
-            let _ = commands.send(Command::Activate(id));
+            let _ = commands.send(Command::Activate(selector.clone()));
         });
         workspaces.append(&button);
     }
@@ -147,8 +157,8 @@ fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>
         loop {
             while let Ok(command) = commands.try_recv() {
                 match command {
-                    Command::Activate(id) => {
-                        let _ = request(&request_socket, &activation_command(id));
+                    Command::Activate(selector) => {
+                        let _ = request(&request_socket, &activation_command(&selector));
                     }
                 }
             }
@@ -231,8 +241,16 @@ fn request(socket: &Path, command: &str) -> io::Result<String> {
     Ok(response)
 }
 
-fn activation_command(id: i64) -> String {
-    format!("dispatch hl.dsp.focus({{ workspace = {id} }})")
+fn activation_command(selector: &WorkspaceSelector) -> String {
+    match selector {
+        WorkspaceSelector::Id(id) => {
+            format!("dispatch hl.dsp.focus({{ workspace = {id} }})")
+        }
+        WorkspaceSelector::Name(name) => format!(
+            "dispatch hl.dsp.focus({{ workspace = 'name:{}' }})",
+            name.replace('\\', "\\\\").replace('\'', "\\'")
+        ),
+    }
 }
 
 fn state_from_parts(
@@ -249,14 +267,21 @@ fn state_from_parts(
 
     let mut workspaces: Vec<_> = workspaces
         .into_iter()
-        .filter(|workspace| workspace.monitor == active_workspace.monitor && workspace.id > 0)
+        .filter(|workspace| {
+            workspace.monitor == active_workspace.monitor && !workspace.name.starts_with("special:")
+        })
         .map(|workspace| Workspace {
             id: workspace.id,
             name: workspace.name,
             urgent: urgent_ids.contains(&workspace.id),
         })
         .collect();
-    workspaces.sort_by_key(|workspace| workspace.id);
+    workspaces.sort_by(|left, right| match (left.id > 0, right.id > 0) {
+        (true, true) => left.id.cmp(&right.id),
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        (false, false) => left.name.cmp(&right.name),
+    });
 
     State {
         workspaces,
@@ -297,12 +322,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keeps_numbered_workspaces_on_the_active_output() {
+    fn keeps_regular_workspaces_on_the_active_output() {
         let state = state_from_parts(
             serde_json::from_str(
                 r#"[
                     {"id": 3, "name": "3", "monitor": "DP-1"},
-                    {"id": -99, "name": "special", "monitor": "DP-1"},
+                    {"id": -1337, "name": "development", "monitor": "DP-1"},
+                    {"id": -99, "name": "special:scratchpad", "monitor": "DP-1"},
                     {"id": 1, "name": "1", "monitor": "DP-1"},
                     {"id": 2, "name": "2", "monitor": "HDMI-A-1"}
                 ]"#,
@@ -328,6 +354,11 @@ mod tests {
                     name: "3".into(),
                     urgent: true,
                 },
+                Workspace {
+                    id: -1337,
+                    name: "development".into(),
+                    urgent: false,
+                },
             ]
         );
     }
@@ -343,8 +374,12 @@ mod tests {
     #[test]
     fn builds_current_hyprland_workspace_dispatch() {
         assert_eq!(
-            activation_command(2),
+            activation_command(&WorkspaceSelector::Id(2)),
             "dispatch hl.dsp.focus({ workspace = 2 })"
+        );
+        assert_eq!(
+            activation_command(&WorkspaceSelector::Name("developer's \\ workspace".into())),
+            "dispatch hl.dsp.focus({ workspace = 'name:developer\\'s \\\\ workspace' })"
         );
     }
 }
