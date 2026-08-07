@@ -25,7 +25,7 @@ fn main() -> glib::ExitCode {
         move |app| {
             load_styles(app);
             notifications.start(app);
-            launcher.install_action(app, {
+            launcher.install_actions(app, {
                 let notifications = notifications.clone();
                 move || notifications.close()
             });

@@ -4,6 +4,8 @@ use nucleo_matcher::{
 };
 
 use super::source::Item;
+#[cfg(test)]
+use super::source::Visual;
 
 const TITLE_BONUS: u32 = 1_000;
 
@@ -67,7 +69,7 @@ mod tests {
         Item {
             id: id.into(),
             title: title.into(),
-            icon: None,
+            visual: Visual::None,
             search_terms: terms.iter().map(|term| (*term).into()).collect(),
         }
     }

@@ -18,8 +18,9 @@ press Ctrl+Alt+Escape inside it to stop the session.
 Use `scripts/dev-session --release` to build and run the optimized binary for
 resource measurements. Add `--cairo` to run GTK without its Vulkan renderer.
 
-Inside the nested session, Ctrl+Space toggles the launcher, Ctrl+Q closes the
-active window, and Ctrl+1 through Ctrl+9 switch workspaces.
+Inside the nested session, Ctrl+Space toggles the app launcher, Ctrl+V toggles
+clipboard history, Ctrl+Q closes the active window, and Ctrl+1 through Ctrl+9
+switch workspaces.
 
 The nested compositor uses its own config, instance signature, Wayland socket,
 and output. `HYPRLAND_NO_SD_VARS=1` prevents it from exporting its environment
