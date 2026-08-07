@@ -222,7 +222,7 @@ impl Manager {
             .borrow()
             .as_ref()
             .expect("center was just constructed")
-            .show();
+            .show(&self.snapshot.borrow());
         if let Some(popups) = self.popups.borrow().as_ref() {
             popups.hide();
         }

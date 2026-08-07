@@ -386,6 +386,7 @@ pub(super) struct Center {
     popover: gtk::Popover,
     groups: gtk::Box,
     group_views: RefCell<Vec<GroupView>>,
+    group_order: RefCell<Vec<String>>,
     stack: gtk::Stack,
     dnd: gtk::Button,
     clear: gtk::Button,
@@ -505,6 +506,7 @@ impl Center {
             popover,
             groups,
             group_views: RefCell::new(Vec::new()),
+            group_order: RefCell::new(Vec::new()),
             stack,
             dnd,
             clear,
@@ -515,12 +517,30 @@ impl Center {
     }
 
     pub fn update(&self, snapshot: &Snapshot) {
+        self.render(snapshot, !self.popover.is_visible());
+    }
+
+    fn render(&self, snapshot: &Snapshot, reset_order: bool) {
         self.collapsed
             .borrow_mut()
             .retain(|key| snapshot.groups.iter().any(|group| group.key == *key));
 
+        let keys = snapshot
+            .groups
+            .iter()
+            .map(|group| group.key.clone())
+            .collect::<Vec<_>>();
+        let groups = {
+            let mut order = self.group_order.borrow_mut();
+            update_group_order(&mut order, &keys, reset_order);
+            order
+                .iter()
+                .filter_map(|key| snapshot.groups.iter().find(|group| group.key == *key))
+                .collect::<Vec<_>>()
+        };
+
         let mut views = self.group_views.borrow_mut();
-        while views.len() < snapshot.groups.len() {
+        while views.len() < groups.len() {
             let view = GroupView::new(
                 &self.collapsed,
                 &self.popover,
@@ -530,10 +550,10 @@ impl Center {
             self.groups.append(&view.container);
             views.push(view);
         }
-        for (view, group) in views.iter_mut().zip(&snapshot.groups) {
+        for (view, group) in views.iter_mut().zip(groups.iter().copied()) {
             view.update(group);
         }
-        while views.len() > snapshot.groups.len() {
+        while views.len() > groups.len() {
             let view = views.pop().expect("group view count exceeds snapshot");
             self.groups.remove(&view.container);
         }
@@ -556,7 +576,8 @@ impl Center {
             .set_sensitive(snapshot.available && snapshot.count > 0);
     }
 
-    pub fn show(&self) {
+    pub fn show(&self, snapshot: &Snapshot) {
+        self.render(snapshot, true);
         self.popover.popup();
     }
 
@@ -566,6 +587,21 @@ impl Center {
 
     pub fn is_visible(&self) -> bool {
         self.popover.is_visible()
+    }
+}
+
+fn update_group_order(order: &mut Vec<String>, keys: &[String], reset: bool) {
+    if reset {
+        order.clear();
+        order.extend_from_slice(keys);
+        return;
+    }
+
+    order.retain(|key| keys.contains(key));
+    for key in keys {
+        if !order.contains(key) {
+            order.push(key.clone());
+        }
     }
 }
 
@@ -883,6 +919,28 @@ fn message(text: &str, class: &str) -> gtk::Label {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_order_stays_stable_until_reset() {
+        let strings = |keys: &[&str]| {
+            keys.iter()
+                .map(|key| (*key).to_string())
+                .collect::<Vec<_>>()
+        };
+        let mut order = strings(&["chat", "mail"]);
+
+        update_group_order(&mut order, &strings(&["mail", "chat"]), false);
+        assert_eq!(order, strings(&["chat", "mail"]));
+
+        update_group_order(&mut order, &strings(&["news", "mail", "chat"]), false);
+        assert_eq!(order, strings(&["chat", "mail", "news"]));
+
+        update_group_order(&mut order, &strings(&["news", "mail"]), false);
+        assert_eq!(order, strings(&["mail", "news"]));
+
+        update_group_order(&mut order, &strings(&["news", "mail"]), true);
+        assert_eq!(order, strings(&["news", "mail"]));
+    }
 
     #[test]
     fn replacements_update_visible_popups_without_resurfacing_hidden_ones() {
