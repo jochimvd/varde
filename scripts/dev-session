@@ -37,7 +37,7 @@ done
 
 shell_dev_select_session "$session"
 
-for command in cargo flock Hyprland hyprctl jq; do
+for command in cargo dbus-daemon flock Hyprland hyprctl jq; do
     command -v "$command" >/dev/null || {
         printf 'missing required command: %s\n' "$command" >&2
         exit 1
@@ -61,34 +61,49 @@ rm -f -- "$SHELL_DEV_SESSION_FILE"
 
 cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
 
-renderer_env=
-if [[ -n $renderer ]]; then
-    renderer_env=" GSK_RENDERER=$renderer"
-fi
-application_id="be.jochim.shell.Development.${session//-/_}"
-host_workspace="shell-dev-$session"
-launcher_pid_file="$SHELL_DEV_RUNTIME_DIR/compositor-pid"
-work_dir="$SHELL_DEV_RUNTIME_DIR/work"
-rm -f -- "$launcher_pid_file"
-launch_command="env SHELL_DEVELOPMENT=1 SHELL_DEV_APP_ID=$application_id SHELL_DEV_BINARY=$repo_dir/target/$profile/shell$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
-hyprctl -i "$host_instance" eval \
-    "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
-float = true, size = { 1280, 720 }, center = true, \
-workspace = 'name:$host_workspace silent', no_initial_focus = true, \
-no_anim = true, render_unfocused = true }))" >/dev/null
-
 compositor_pid=
+bus_pid=
+bus_socket="$SHELL_DEV_RUNTIME_DIR/bus"
+launcher_pid_file="$SHELL_DEV_RUNTIME_DIR/compositor-pid"
 metadata_tmp="$SHELL_DEV_SESSION_FILE.$$"
 
 cleanup() {
     if [[ -n $compositor_pid ]] && kill -0 "$compositor_pid" 2>/dev/null; then
         kill "$compositor_pid"
     fi
-    rm -f -- "$launcher_pid_file" "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
+    if [[ -n $bus_pid ]] && kill -0 "$bus_pid" 2>/dev/null; then
+        kill "$bus_pid"
+    fi
+    rm -f -- "$bus_socket" "$launcher_pid_file" "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+rm -f -- "$bus_socket"
+bus_info=$(dbus-daemon --session --fork --address="unix:path=$bus_socket" \
+    --print-address=1 --print-pid=1)
+bus_address=${bus_info%%$'\n'*}
+bus_pid=${bus_info##*$'\n'}
+if [[ -z $bus_address || ! $bus_pid =~ ^[0-9]+$ ]]; then
+    printf 'failed to start the development D-Bus session\n' >&2
+    exit 1
+fi
+
+renderer_env=
+if [[ -n $renderer ]]; then
+    renderer_env=" GSK_RENDERER=$renderer"
+fi
+application_id="be.jochim.shell.Development.${session//-/_}"
+host_workspace="shell-dev-$session"
+work_dir="$SHELL_DEV_RUNTIME_DIR/work"
+rm -f -- "$launcher_pid_file"
+launch_command="env SHELL_NOTIFICATION_BUS_ADDRESS=$bus_address SHELL_DEVELOPMENT=1 SHELL_DEV_APP_ID=$application_id SHELL_DEV_BINARY=$repo_dir/target/$profile/shell$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
+hyprctl -i "$host_instance" eval \
+    "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
+float = true, size = { 1280, 720 }, center = true, \
+workspace = 'name:$host_workspace silent', no_initial_focus = true, \
+    no_anim = true, render_unfocused = true }))" >/dev/null
 
 instance=
 for _ in {1..100}; do
@@ -130,9 +145,10 @@ if [[ -z $output ]]; then
 fi
 
 umask 077
-printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\nSHELL_DEV_HOST_WORKSPACE=%q\nSHELL_DEV_APP_ID=%q\nSHELL_DEV_WORK_DIR=%q\nSHELL_DEV_PROFILE=%q\nSHELL_DEV_RENDERER=%q\n' \
+printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\nSHELL_DEV_HOST_WORKSPACE=%q\nSHELL_DEV_APP_ID=%q\nSHELL_DEV_WORK_DIR=%q\nSHELL_DEV_DBUS_ADDRESS=%q\nSHELL_DEV_DBUS_PID=%q\nSHELL_DEV_PROFILE=%q\nSHELL_DEV_RENDERER=%q\n' \
     "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" \
-    "$host_workspace" "$application_id" "$work_dir" "$profile" "$renderer" >"$metadata_tmp"
+    "$host_workspace" "$application_id" "$work_dir" "$bus_address" "$bus_pid" \
+    "$profile" "$renderer" >"$metadata_tmp"
 mv -- "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
 
 printf 'Nested Hyprland is ready.\n'
