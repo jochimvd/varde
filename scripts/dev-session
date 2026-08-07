@@ -35,7 +35,7 @@ while (( $# > 0 )); do
     shift
 done
 
-shell_dev_select_session "$session"
+varde_dev_select_session "$session"
 
 for command in cargo dbus-daemon flock Hyprland hyprctl jq; do
     command -v "$command" >/dev/null || {
@@ -51,21 +51,21 @@ fi
 
 host_instance=${HYPRLAND_INSTANCE_SIGNATURE:?dev-session must be started from Hyprland}
 
-mkdir -p "$SHELL_DEV_RUNTIME_DIR"
-exec {lock_fd}>"$SHELL_DEV_RUNTIME_DIR/lock"
+mkdir -p "$VARDE_DEV_RUNTIME_DIR"
+exec {lock_fd}>"$VARDE_DEV_RUNTIME_DIR/lock"
 if ! flock -n "$lock_fd"; then
-    printf 'shell dev session %s is already running\n' "$session" >&2
+    printf 'Varde dev session %s is already running\n' "$session" >&2
     exit 1
 fi
-rm -f -- "$SHELL_DEV_SESSION_FILE"
+rm -f -- "$VARDE_DEV_SESSION_FILE"
 
 cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
 
 compositor_pid=
 bus_pid=
-bus_socket="$SHELL_DEV_RUNTIME_DIR/bus"
-launcher_pid_file="$SHELL_DEV_RUNTIME_DIR/compositor-pid"
-metadata_tmp="$SHELL_DEV_SESSION_FILE.$$"
+bus_socket="$VARDE_DEV_RUNTIME_DIR/bus"
+launcher_pid_file="$VARDE_DEV_RUNTIME_DIR/compositor-pid"
+metadata_tmp="$VARDE_DEV_SESSION_FILE.$$"
 
 cleanup() {
     if [[ -n $compositor_pid ]] && kill -0 "$compositor_pid" 2>/dev/null; then
@@ -74,7 +74,7 @@ cleanup() {
     if [[ -n $bus_pid ]] && kill -0 "$bus_pid" 2>/dev/null; then
         kill "$bus_pid"
     fi
-    rm -f -- "$bus_socket" "$launcher_pid_file" "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
+    rm -f -- "$bus_socket" "$launcher_pid_file" "$metadata_tmp" "$VARDE_DEV_SESSION_FILE"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -94,11 +94,11 @@ renderer_env=
 if [[ -n $renderer ]]; then
     renderer_env=" GSK_RENDERER=$renderer"
 fi
-application_id="be.jochim.shell.Development.${session//-/_}"
-host_workspace="shell-dev-$session"
-work_dir="$SHELL_DEV_RUNTIME_DIR/work"
+application_id="org.varde.desktop.Development.${session//-/_}"
+host_workspace="varde-dev-$session"
+work_dir="$VARDE_DEV_RUNTIME_DIR/work"
 rm -f -- "$launcher_pid_file"
-launch_command="env SHELL_NOTIFICATION_BUS_ADDRESS=$bus_address SHELL_DEVELOPMENT=1 SHELL_DEV_APP_ID=$application_id SHELL_DEV_BINARY=$repo_dir/target/$profile/shell$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
+launch_command="env VARDE_NOTIFICATION_BUS_ADDRESS=$bus_address VARDE_DEVELOPMENT=1 VARDE_DEV_APP_ID=$application_id VARDE_DEV_BINARY=$repo_dir/target/$profile/varde$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
 hyprctl -i "$host_instance" eval \
     "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
 float = true, size = { 1280, 720 }, center = true, \
@@ -145,11 +145,11 @@ if [[ -z $output ]]; then
 fi
 
 umask 077
-printf 'SHELL_DEV_PID=%q\nSHELL_DEV_INSTANCE=%q\nSHELL_DEV_WAYLAND_DISPLAY=%q\nSHELL_DEV_OUTPUT=%q\nSHELL_DEV_HOST_INSTANCE=%q\nSHELL_DEV_HOST_WORKSPACE=%q\nSHELL_DEV_APP_ID=%q\nSHELL_DEV_WORK_DIR=%q\nSHELL_DEV_DBUS_ADDRESS=%q\nSHELL_DEV_DBUS_PID=%q\nSHELL_DEV_PROFILE=%q\nSHELL_DEV_RENDERER=%q\n' \
+printf 'VARDE_DEV_PID=%q\nVARDE_DEV_INSTANCE=%q\nVARDE_DEV_WAYLAND_DISPLAY=%q\nVARDE_DEV_OUTPUT=%q\nVARDE_DEV_HOST_INSTANCE=%q\nVARDE_DEV_HOST_WORKSPACE=%q\nVARDE_DEV_APP_ID=%q\nVARDE_DEV_WORK_DIR=%q\nVARDE_DEV_DBUS_ADDRESS=%q\nVARDE_DEV_DBUS_PID=%q\nVARDE_DEV_PROFILE=%q\nVARDE_DEV_RENDERER=%q\n' \
     "$compositor_pid" "$instance" "$wayland_display" "$output" "$host_instance" \
     "$host_workspace" "$application_id" "$work_dir" "$bus_address" "$bus_pid" \
     "$profile" "$renderer" >"$metadata_tmp"
-mv -- "$metadata_tmp" "$SHELL_DEV_SESSION_FILE"
+mv -- "$metadata_tmp" "$VARDE_DEV_SESSION_FILE"
 
 printf 'Nested Hyprland is ready.\n'
 printf '  session:  %s\n' "$session"

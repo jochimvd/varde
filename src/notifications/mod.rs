@@ -59,7 +59,7 @@ impl Manager {
     }
 
     pub fn start(self: &Rc<Self>, app: &gtk::Application) {
-        if std::env::var_os("SHELL_DEVELOPMENT").is_some() {
+        if std::env::var_os("VARDE_DEVELOPMENT").is_some() {
             self.startup.take();
             self.popups.replace(Some(Popups::new(app, self)));
             let (changes, views) = async_channel::bounded(1);

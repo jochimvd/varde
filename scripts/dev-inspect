@@ -24,17 +24,17 @@ while (( $# > 0 )); do
     shift
 done
 
-shell_dev_select_session "$session"
-shell_dev_load_session
+varde_dev_select_session "$session"
+varde_dev_load_session
 
-monitors=$(hyprctl -i "$SHELL_DEV_INSTANCE" -j monitors)
-layers=$(hyprctl -i "$SHELL_DEV_INSTANCE" -j layers)
-clients=$(hyprctl -i "$SHELL_DEV_INSTANCE" -j clients)
+monitors=$(hyprctl -i "$VARDE_DEV_INSTANCE" -j monitors)
+layers=$(hyprctl -i "$VARDE_DEV_INSTANCE" -j layers)
+clients=$(hyprctl -i "$VARDE_DEV_INSTANCE" -j clients)
 
 jq -n \
-    --arg instance "$SHELL_DEV_INSTANCE" \
+    --arg instance "$VARDE_DEV_INSTANCE" \
     --arg session "$session" \
-    --arg wayland_display "$SHELL_DEV_WAYLAND_DISPLAY" \
+    --arg wayland_display "$VARDE_DEV_WAYLAND_DISPLAY" \
     --argjson monitors "$monitors" \
     --argjson layers "$layers" \
     --argjson clients "$clients" \

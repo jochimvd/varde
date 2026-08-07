@@ -12,7 +12,7 @@ use super::source::{
 };
 use super::{Manager, Mode, preview::Preview, search, source};
 
-const LAUNCHER_NAME: &str = "shell-launcher";
+const LAUNCHER_NAME: &str = "varde-launcher";
 const PANEL_WIDTH: i32 = 600;
 const ROW_HEIGHT: i32 = 44;
 const VISIBLE_ROWS: i32 = 10;

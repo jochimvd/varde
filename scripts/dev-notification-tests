@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-bus_address=${SHELL_NOTIFICATION_BUS_ADDRESS:?SHELL_NOTIFICATION_BUS_ADDRESS is not set}
+bus_address=${VARDE_NOTIFICATION_BUS_ADDRESS:?VARDE_NOTIFICATION_BUS_ADDRESS is not set}
 service=org.freedesktop.Notifications
 path=/org/freedesktop/Notifications
 interface=org.freedesktop.Notifications

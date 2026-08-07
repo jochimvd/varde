@@ -100,14 +100,14 @@ pub(super) fn start(changes: async_channel::Sender<()>) -> Option<Control> {
     };
     crate::background::spawn("notification-daemon", move || {
         if let Err(error) = run(shared, receiver) {
-            eprintln!("shell: notification daemon failed: {error}");
+            eprintln!("varde: notification daemon failed: {error}");
         }
     })
     .then_some(control)
 }
 
 fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
-    let builder = match std::env::var("SHELL_NOTIFICATION_BUS_ADDRESS") {
+    let builder = match std::env::var("VARDE_NOTIFICATION_BUS_ADDRESS") {
         Ok(address) => zbus::blocking::connection::Builder::address(address.as_str())?,
         Err(_) => zbus::blocking::connection::Builder::session()?,
     };
@@ -350,7 +350,7 @@ impl Notifications {
 
     #[zbus(name = "GetServerInformation")]
     fn get_server_information(&self) -> (&str, &str, &str, &str) {
-        ("shell", "jochim", env!("CARGO_PKG_VERSION"), "1.2")
+        ("Varde", "Varde", env!("CARGO_PKG_VERSION"), "1.2")
     }
 
     #[zbus(signal, name = "NotificationClosed")]

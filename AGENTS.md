@@ -12,7 +12,7 @@ This project is a custom desktop shell for Hyprland on Arch Linux, written in Ru
 - Format with `cargo fmt`; keep `cargo clippy` clean; add focused tests where they provide real value.
 - Automated agents must use a separate Git worktree and choose a unique
   development session ID, such as their agent or task name. Create worktrees as
-  siblings of the main checkout, named `shell-wt-<session-id>`, on a branch
+  siblings of the main checkout, named `varde-wt-<session-id>`, on a branch
   named `<session-id>`. Choose a short, descriptive ID that says what the work
   does, and use that same ID with `--session ID` for
   `scripts/dev-session`, `scripts/dev-show`, `scripts/dev-inspect`, and
