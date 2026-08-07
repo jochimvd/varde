@@ -2,11 +2,12 @@ use std::io::Read;
 
 use gio::prelude::*;
 
-pub(super) const USAGE: &str = "usage: shell [launcher [apps | --dmenu [-p PROMPT]]]";
+pub(super) const USAGE: &str = "usage: shell [launcher [apps | clipboard | --dmenu [-p PROMPT]]]";
 
 pub(super) enum Request {
     Activate,
     Launcher,
+    Clipboard,
     Dmenu { prompt: String },
 }
 
@@ -25,6 +26,9 @@ pub(super) fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String>
         [] => Ok(Request::Activate),
         [launcher] if launcher == "launcher" => Ok(Request::Launcher),
         [launcher, apps] if launcher == "launcher" && apps == "apps" => Ok(Request::Launcher),
+        [launcher, clipboard] if launcher == "launcher" && clipboard == "clipboard" => {
+            Ok(Request::Clipboard)
+        }
         [launcher, dmenu, options @ ..] if launcher == "launcher" && dmenu == "--dmenu" => {
             let mut prompt = "Search".to_string();
             let mut index = 0;
@@ -83,6 +87,10 @@ mod tests {
         assert!(matches!(
             parse(&args(&["launcher", "apps"])),
             Ok(Request::Launcher)
+        ));
+        assert!(matches!(
+            parse(&args(&["launcher", "clipboard"])),
+            Ok(Request::Clipboard)
         ));
     }
 
