@@ -33,8 +33,8 @@ if [[ $focus != true ]]; then
     exit 1
 fi
 
-shell_dev_select_session "$session"
-shell_dev_load_session
+varde_dev_select_session "$session"
+varde_dev_load_session
 
-hyprctl -i "$SHELL_DEV_HOST_INSTANCE" dispatch \
-    "hl.dsp.focus({ workspace = 'name:$SHELL_DEV_HOST_WORKSPACE' })" >/dev/null
+hyprctl -i "$VARDE_DEV_HOST_INSTANCE" dispatch \
+    "hl.dsp.focus({ workspace = 'name:$VARDE_DEV_HOST_WORKSPACE' })" >/dev/null

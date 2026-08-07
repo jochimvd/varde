@@ -2,7 +2,7 @@ use std::io::Read;
 
 use gio::prelude::*;
 
-pub(super) const USAGE: &str = "usage: shell [launcher [apps | clipboard | --dmenu [-p PROMPT]]]";
+pub(super) const USAGE: &str = "usage: varde [launcher [apps | clipboard | --dmenu [-p PROMPT]]]";
 
 pub(super) enum Request {
     Activate,
@@ -74,7 +74,7 @@ mod tests {
     use super::*;
 
     fn args(values: &[&str]) -> Vec<std::ffi::OsString> {
-        std::iter::once("shell")
+        std::iter::once("varde")
             .chain(values.iter().copied())
             .map(Into::into)
             .collect()

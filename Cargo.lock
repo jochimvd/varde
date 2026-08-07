@@ -1000,22 +1000,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shell"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "gdk-pixbuf",
- "gio",
- "gtk4",
- "gtk4-layer-shell",
- "libc",
- "nucleo-matcher",
- "serde",
- "serde_json",
- "zbus",
-]
-
-[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1205,6 +1189,22 @@ dependencies = [
  "js-sys",
  "serde_core",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "varde"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gdk-pixbuf",
+ "gio",
+ "gtk4",
+ "gtk4-layer-shell",
+ "libc",
+ "nucleo-matcher",
+ "serde",
+ "serde_json",
+ "zbus",
 ]
 
 [[package]]

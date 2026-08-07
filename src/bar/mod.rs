@@ -8,7 +8,7 @@ use modules::{connectivity, hyprland, services, system, tray};
 const HEIGHT: i32 = 32;
 const MODULE_GAP: i32 = 10;
 const TRAY_REVEAL_GAP: i32 = 10;
-const BAR_NAME: &str = "shell-bar";
+const BAR_NAME: &str = "varde-bar";
 
 pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notifications::Manager>) {
     if app
@@ -26,12 +26,12 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
         .height_request(HEIGHT)
         .build();
     window.add_css_class("bar");
-    if std::env::var_os("SHELL_DEVELOPMENT").is_some() {
+    if std::env::var_os("VARDE_DEVELOPMENT").is_some() {
         window.add_css_class("development");
     }
 
     window.init_layer_shell();
-    window.set_namespace(Some("shell"));
+    window.set_namespace(Some("varde"));
     window.set_layer(gtk4_layer_shell::Layer::Top);
     window.set_anchor(gtk4_layer_shell::Edge::Top, true);
     window.set_anchor(gtk4_layer_shell::Edge::Left, true);

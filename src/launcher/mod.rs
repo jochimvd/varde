@@ -94,12 +94,12 @@ impl Manager {
                 }
                 Ok(None) => 1.into(),
                 Err(error) => {
-                    command_line.printerr_literal(&format!("shell: {error}\n"));
+                    command_line.printerr_literal(&format!("varde: {error}\n"));
                     2.into()
                 }
             },
             Err(error) => {
-                command_line.printerr_literal(&format!("shell: {error}\n{}\n", command::USAGE));
+                command_line.printerr_literal(&format!("varde: {error}\n{}\n", command::USAGE));
                 2.into()
             }
         }

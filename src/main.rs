@@ -7,13 +7,13 @@ use gio::prelude::*;
 use gtk::glib;
 use std::env;
 
-const APPLICATION_ID: &str = "be.jochim.shell";
+const APPLICATION_ID: &str = "org.varde.desktop";
 
 fn main() -> glib::ExitCode {
     let launcher = launcher::Manager::new();
     let notifications = notifications::Manager::new();
     let application_id =
-        env::var("SHELL_DEV_APP_ID").unwrap_or_else(|_| APPLICATION_ID.to_string());
+        env::var("VARDE_DEV_APP_ID").unwrap_or_else(|_| APPLICATION_ID.to_string());
     let app = gtk::Application::builder()
         .application_id(&application_id)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)

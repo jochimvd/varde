@@ -12,7 +12,7 @@ use gtk4_layer_shell::LayerShell;
 
 use super::{Manager, model::Snapshot};
 
-const POPUP_NAME: &str = "shell-notification-popups";
+const POPUP_NAME: &str = "varde-notification-popups";
 const PANEL_WIDTH: i32 = 460;
 const POPUP_WIDTH: i32 = 400;
 const PANEL_GAP: i32 = 10;

@@ -27,7 +27,7 @@ pub fn spawn(name: &str, task: impl FnOnce() + Send + 'static) -> bool {
     match thread::Builder::new().name(name.into()).spawn(task) {
         Ok(_) => true,
         Err(error) => {
-            eprintln!("shell: failed to spawn {name}: {error}");
+            eprintln!("varde: failed to spawn {name}: {error}");
             false
         }
     }

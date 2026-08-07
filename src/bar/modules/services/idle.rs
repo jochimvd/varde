@@ -55,7 +55,7 @@ impl IdleInhibitor {
             proxy
                 .call(
                     "Inhibit",
-                    &("shell", "Idle inhibition requested from the status bar"),
+                    &("varde", "Idle inhibition requested from the status bar"),
                 )
                 .map_err(|error| error.to_string())?
         };

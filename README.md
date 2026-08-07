@@ -1,4 +1,4 @@
-# Shell
+# Varde
 
 A custom desktop shell for Hyprland, written in Rust.
 
@@ -12,14 +12,14 @@ notification center backed by Mako's active list and history. It can also be
 opened as an application action:
 
 ```sh
-gapplication action be.jochim.shell notifications
+gapplication action org.varde.desktop notifications
 ```
 
 The application launcher is exposed as a GTK application action, so the shell
 continues to run as one process:
 
 ```sh
-gapplication action be.jochim.shell launcher
+gapplication action org.varde.desktop launcher
 ```
 
 It lists visible desktop applications and supports fuzzy searching. The same
@@ -27,14 +27,14 @@ window can also select newline-delimited input for shell scripts:
 
 ```sh
 printf "Lock\nSuspend\nReboot\nShutdown\nLog Out" |
-  shell launcher --dmenu -p "System..."
+  varde launcher --dmenu -p "System..."
 ```
 
 Clipboard history is available through a second action or the launcher CLI:
 
 ```sh
-gapplication action be.jochim.shell clipboard
-shell launcher clipboard
+gapplication action org.varde.desktop clipboard
+varde launcher clipboard
 ```
 
 It reads the existing cliphist history, fuzzy-searches text and image metadata,
@@ -60,9 +60,9 @@ Start the development session from a terminal in Hyprland:
 scripts/dev-session
 ```
 
-This builds `target/debug/shell`, starts a nested Hyprland instance with
+This builds `target/debug/varde`, starts a nested Hyprland instance with
 `dev/hyprland.lua`, and launches the binary inside it. The 1280x720 host window
-is created silently on a dedicated `shell-dev` workspace, so starting the
+is created silently on a dedicated `varde-dev` workspace, so starting the
 session does not switch workspaces, steal focus, or retile the current
 workspace.
 
@@ -103,7 +103,7 @@ scripts/dev-show --session agent-1 --focus
 
 Named sessions keep their metadata, Wayland socket, host workspace, GTK
 application ID, working directory, and default screenshot separate. Their
-working directory is `$XDG_RUNTIME_DIR/shell-dev/<session>/work`, so
+working directory is `$XDG_RUNTIME_DIR/varde-dev/<session>/work`, so
 applications with relative paths cannot write into the Git worktree. Their
 screenshots default to `target/dev/<session>/screenshot.png`. Omitting
 `--session` selects the single-instance `default` session, which is reserved
@@ -114,7 +114,7 @@ The nested compositor has its own config, Hyprland instance signature,
 Wayland socket, and output. Inspection and screenshots target those nested
 identifiers. `HYPRLAND_NO_SD_VARS=1` prevents the test compositor from
 exporting its environment into the live user session. It also sets
-`SHELL_DEVELOPMENT=1` to show the module alignment guides; normal launches do
+`VARDE_DEVELOPMENT=1` to show the module alignment guides; normal launches do
 not show them. The sessions intentionally retain access to the live user D-Bus
 and system services, so notification, tray, idle, audio, network, and Bluetooth
 interactions can affect the live desktop.

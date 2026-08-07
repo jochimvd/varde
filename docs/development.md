@@ -11,7 +11,7 @@ Run this from a terminal in the live Wayland session:
 scripts/dev-session
 ```
 
-The script builds `target/debug/shell`, launches a nested Hyprland window with
+The script builds `target/debug/varde`, launches a nested Hyprland window with
 `dev/hyprland.lua`, and starts the built binary inside it. Close the window or
 press Ctrl+Alt+Escape inside it to stop the session.
 
@@ -25,7 +25,7 @@ switch workspaces.
 The nested compositor uses its own config, instance signature, Wayland socket,
 and output. `HYPRLAND_NO_SD_VARS=1` prevents it from exporting its environment
 to the live user session. The live compositor hosts a temporary 1280x720
-window on a dedicated `shell-dev` workspace. It is created silently without
+window on a dedicated `varde-dev` workspace. It is created silently without
 focus or animation, so starting it does not switch workspaces, steal focus, or
 retile the current workspace. Show it only when wanted:
 
@@ -35,7 +35,7 @@ scripts/dev-show --focus
 
 The test shell and inspection commands target the nested socket.
 Session metadata is kept in
-`$XDG_RUNTIME_DIR/shell-dev/default/session` and removed on exit.
+`$XDG_RUNTIME_DIR/varde-dev/default/session` and removed on exit.
 
 ## Concurrent agent sessions
 
@@ -55,8 +55,8 @@ uses `default`, which is reserved for manual development. Automated agents must
 always pass their unique session ID explicitly to every development command.
 
 Each session has its own runtime metadata and lock, Wayland socket,
-Hyprland instance, `shell-dev-<session>` host workspace, GTK application ID,
-working directory at `$XDG_RUNTIME_DIR/shell-dev/<session>/work`, and default
+Hyprland instance, `varde-dev-<session>` host workspace, GTK application ID,
+working directory at `$XDG_RUNTIME_DIR/varde-dev/<session>/work`, and default
 screenshot at `target/dev/<session>/screenshot.png`. The compositor, shell, and
 applications launched from it inherit that working directory, preventing
 relative application paths from writing into the Git worktree. Two processes

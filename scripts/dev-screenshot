@@ -41,7 +41,7 @@ while (( $# > 0 )); do
     shift
 done
 
-shell_dev_select_session "$session"
+varde_dev_select_session "$session"
 output_file=${output_file:-$repo_dir/target/dev/$session/screenshot.png}
 
 command -v grim >/dev/null || {
@@ -49,11 +49,11 @@ command -v grim >/dev/null || {
     exit 1
 }
 
-shell_dev_load_session
+varde_dev_load_session
 
 mkdir -p "$(dirname -- "$output_file")"
-WAYLAND_DISPLAY=$SHELL_DEV_WAYLAND_DISPLAY \
-HYPRLAND_INSTANCE_SIGNATURE=$SHELL_DEV_INSTANCE \
-    grim -o "$SHELL_DEV_OUTPUT" "$output_file"
+WAYLAND_DISPLAY=$VARDE_DEV_WAYLAND_DISPLAY \
+HYPRLAND_INSTANCE_SIGNATURE=$VARDE_DEV_INSTANCE \
+    grim -o "$VARDE_DEV_OUTPUT" "$output_file"
 
 printf '%s\n' "$output_file"

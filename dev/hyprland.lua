@@ -29,15 +29,15 @@ hl.config({
 hl.permission({ binary = "/usr/bin/grim", type = "screencopy", mode = "allow" })
 
 hl.on("hyprland.start", function()
-    local shell = os.getenv("SHELL_DEV_BINARY")
-    if shell then
-        hl.exec_cmd(shell)
+    local varde = os.getenv("VARDE_DEV_BINARY")
+    if varde then
+        hl.exec_cmd(varde)
     end
 end)
 
 hl.bind("CTRL + ALT + Escape", hl.dsp.exit())
 hl.bind("CTRL + Q", hl.dsp.window.close())
-local app_id = os.getenv("SHELL_DEV_APP_ID") or "be.jochim.shell"
+local app_id = os.getenv("VARDE_DEV_APP_ID") or "org.varde.desktop"
 hl.bind("CTRL + SPACE", hl.dsp.exec_cmd("gapplication action " .. app_id .. " launcher"))
 hl.bind("CTRL + V", hl.dsp.exec_cmd("gapplication action " .. app_id .. " clipboard"))
 
