@@ -39,9 +39,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     window.set_exclusive_zone(HEIGHT);
     window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::None);
 
-    let layout = gtk::Grid::builder().column_homogeneous(true).build();
-
-    let left = region("left", gtk::Align::Start);
+    let left = region("left", gtk::Align::Fill);
     let center = region("center", gtk::Align::Center);
     let right = region("right", gtk::Align::End);
     right.set_spacing(MODULE_GAP);
@@ -59,9 +57,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     right.append(&notifications.button(app));
     right.append(&services.privacy);
 
-    layout.attach(&left, 0, 0, 1, 1);
-    layout.attach(&center, 1, 0, 1, 1);
-    layout.attach(&right, 2, 0, 1, 1);
+    let layout = constrained_layout(&left, &center, &right);
 
     window.set_child(Some(&layout));
     window.present();
@@ -101,9 +97,45 @@ fn tray_group(idle: &gtk::Button, tray: &gtk::Box) -> gtk::Overlay {
     group
 }
 
+fn constrained_layout(left: &gtk::Box, center: &gtk::Box, right: &gtk::Box) -> gtk::Box {
+    use gtk::ConstraintAttribute as Attribute;
+
+    let manager = gtk::ConstraintLayout::new();
+    manager
+        .add_constraints_from_description(
+            ["H:|[left][center][right]|"],
+            0,
+            0,
+            [("left", left), ("center", center), ("right", right)],
+        )
+        .expect("valid bar layout constraints");
+    let align = |target: &gtk::Box, attribute| {
+        gtk::Constraint::new(
+            Some(target),
+            attribute,
+            gtk::ConstraintRelation::Eq,
+            None::<&gtk::Box>,
+            attribute,
+            1.0,
+            0.0,
+            gtk::ffi::GTK_CONSTRAINT_STRENGTH_REQUIRED,
+        )
+    };
+    manager.add_constraint(align(center, Attribute::CenterX));
+    for child in [left, center, right] {
+        manager.add_constraint(align(child, Attribute::CenterY));
+    }
+
+    let layout = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    layout.append(left);
+    layout.append(center);
+    layout.append(right);
+    layout.set_layout_manager(Some(manager));
+    layout
+}
+
 fn region(name: &str, align: gtk::Align) -> gtk::Box {
     let region = gtk::Box::builder()
-        .hexpand(true)
         .halign(align)
         .valign(gtk::Align::Center)
         .build();
