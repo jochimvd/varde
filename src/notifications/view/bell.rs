@@ -10,7 +10,7 @@ const DOT_TOP: i32 = 4;
 
 pub(in crate::notifications) struct Bell {
     pub button: gtk::Button,
-    label: gtk::Label,
+    icon: gtk::Stack,
     dot: gtk::Box,
     class: RefCell<String>,
 }
@@ -21,7 +21,14 @@ impl Bell {
         button.add_css_class("module");
         button.add_css_class("notification");
 
-        let label = gtk::Label::new(None);
+        let normal = gtk::Label::new(Some("󰂚"));
+        let muted = gtk::Label::new(Some("󰂛"));
+        let icon = gtk::Stack::builder()
+            .hhomogeneous(true)
+            .vhomogeneous(true)
+            .build();
+        icon.add_named(&normal, Some("normal"));
+        icon.add_named(&muted, Some("muted"));
         let dot = gtk::Box::builder()
             .halign(gtk::Align::End)
             .valign(gtk::Align::Start)
@@ -30,7 +37,7 @@ impl Bell {
         dot.add_css_class("notification-dot");
 
         let overlay = gtk::Overlay::new();
-        overlay.set_child(Some(&label));
+        overlay.set_child(Some(&icon));
         overlay.add_overlay(&dot);
         overlay.set_clip_overlay(&dot, false);
         overlay.connect_get_child_position(|overlay, _| {
@@ -68,7 +75,7 @@ impl Bell {
 
         Self {
             button,
-            label,
+            icon,
             dot,
             class: RefCell::new(String::new()),
         }
@@ -76,7 +83,8 @@ impl Bell {
 
     pub fn update(&self, snapshot: &Snapshot) {
         let alt = snapshot.alt();
-        self.label.set_text(if snapshot.dnd { "󰂛" } else { "󰂚" });
+        self.icon
+            .set_visible_child_name(if snapshot.dnd { "muted" } else { "normal" });
         self.dot.set_visible(snapshot.count > 0);
         self.button.set_tooltip_text(Some(&snapshot.tooltip()));
 
