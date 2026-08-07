@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+bus_address=${SHELL_NOTIFICATION_BUS_ADDRESS:?SHELL_NOTIFICATION_BUS_ADDRESS is not set}
+service=org.freedesktop.Notifications
+path=/org/freedesktop/Notifications
+interface=org.freedesktop.Notifications
+step=0
+last_id=
+
+command -v gdbus >/dev/null || {
+    printf 'missing required command: gdbus\n' >&2
+    exit 1
+}
+
+next() {
+    step=$((step + 1))
+    printf '\n[%d] %s\nPress Enter to run this step...' "$step" "$1"
+    IFS= read -r _ || exit 0
+}
+
+notify() {
+    local app_name=$1
+    local replaces_id=$2
+    local app_icon=$3
+    local summary=$4
+    local body=$5
+    local actions=$6
+    local hints=$7
+    local timeout=$8
+    local reply
+
+    printf '\napp_name:   %s\n' "$app_name"
+    printf 'replaces_id: %s\n' "$replaces_id"
+    printf 'app_icon:    %s\n' "$app_icon"
+    printf 'summary:     %s\n' "$summary"
+    printf 'body:        %s\n' "$body"
+    printf 'actions:     %s\n' "$actions"
+    printf 'hints:       %s\n' "$hints"
+    printf 'timeout_ms:  %s\n' "$timeout"
+
+    reply=$(gdbus call \
+        --address "$bus_address" \
+        --dest "$service" \
+        --object-path "$path" \
+        --method "$interface.Notify" \
+        -- "$app_name" "$replaces_id" "$app_icon" "$summary" "$body" \
+        "$actions" "$hints" "$timeout")
+    if [[ $reply =~ uint32\ ([0-9]+) ]]; then
+        last_id=${BASH_REMATCH[1]}
+    else
+        printf 'unexpected Notify response: %s\n' "$reply" >&2
+        exit 1
+    fi
+    printf 'notification_id: %s\n' "$last_id"
+}
+
+close_notification() {
+    local id=$1
+
+    printf '\nmethod:          CloseNotification\n'
+    printf 'notification_id: %s\n' "$id"
+    printf 'expected:        removed from active notifications and history\n'
+    gdbus call \
+        --address "$bus_address" \
+        --dest "$service" \
+        --object-path "$path" \
+        --method "$interface.CloseNotification" \
+        "$id"
+}
+
+printf 'Interactive notification protocol tests\n'
+printf 'Each Enter press performs only the step shown next.\n'
+printf 'Nothing is automatically dismissed or advanced.\n'
+
+next 'Send resident notification with a default action'
+notify \
+    'Protocol Tests' 0 'dialog-information' \
+    '[RESIDENT ACTION] Left-click acts but does not consume' \
+    'resident=true and timeout=0. Left-click should emit the default action while leaving this present; right-click dismisses it.' \
+    "['default', 'Open']" \
+    "{'resident': <true>, 'urgency': <byte 1>}" 0
+
+next 'Send non-resident notification with a default action'
+notify \
+    'Protocol Tests' 0 'utilities-terminal' \
+    '[NORMAL ACTION] Left-click acts and consumes' \
+    'resident=false and timeout=0. Left-click should emit the default action and remove this; right-click dismisses without action.' \
+    "['default', 'Open']" \
+    "{'resident': <false>, 'urgency': <byte 1>}" 0
+
+next 'Send critical notification using the server default timeout'
+notify \
+    'Protocol Tests' 0 'dialog-error' \
+    '[CRITICAL DEFAULT] Persistent until dismissed' \
+    'urgency=critical and timeout=-1. The server default should keep this notification active.' \
+    '[]' "{'urgency': <byte 2>}" -1
+
+next 'Send normal notification with an explicit zero timeout'
+notify \
+    'Protocol Tests' 0 'emblem-default' \
+    '[ZERO TIMEOUT] Explicitly persistent' \
+    'urgency=normal and timeout=0. This should remain active until explicitly removed.' \
+    '[]' "{'urgency': <byte 1>}" 0
+
+next 'Send notification with an application icon and raw image-data hint'
+notify \
+    'Teams for Linux' 0 'teams-for-linux' \
+    '[IMAGE HINT] Picture plus application icon' \
+    'image-data supplies the large picture while app_icon supplies the Teams application icon.' \
+    '[]' "{'image-data': <(2, 2, 8, true, 8, 4, [byte 255, 64, 64, 255, 64, 255, 64, 255, 64, 64, 255, 255, 255, 220, 64, 255])>, 'urgency': <byte 1>}" 0
+
+next 'Send a notification with progress at 25 percent'
+notify \
+    'Download Manager' 0 'folder-download' \
+    '[PROGRESS 1/2] Download at 25%' \
+    'value=25 renders a quarter-filled progress bar. The next step replaces this notification with value=75.' \
+    '[]' "{'value': <25>, 'urgency': <byte 0>}" 0
+progress_id=$last_id
+
+next 'Replace the progress notification with 75 percent'
+notify \
+    'Download Manager' "$progress_id" 'folder-download' \
+    '[PROGRESS 2/2] Download at 75%' \
+    'value=75 updates the same notification to a three-quarter-filled progress bar.' \
+    '[]' "{'value': <75>, 'urgency': <byte 0>}" 0
+
+next 'Send transient notification with a short timeout'
+notify \
+    'Protocol Tests' 0 'document-new' \
+    '[TRANSIENT] Must not enter history after expiry' \
+    'transient=true and timeout=2500. It should expire naturally and disappear completely.' \
+    '[]' "{'transient': <true>, 'urgency': <byte 1>}" 2500
+
+next 'Send critical notification with an explicit timeout'
+notify \
+    'Protocol Tests' 0 'battery-caution' \
+    '[CRITICAL EXPLICIT TIMEOUT] Expires after four seconds' \
+    'urgency=critical and timeout=4000. The sender-provided timeout should override critical persistence.' \
+    '[]' "{'urgency': <byte 2>}" 4000
+
+next 'Send a persistent notification for sender recall testing'
+notify \
+    'Protocol Tests' 0 'edit-delete' \
+    '[SENDER RECALL 1/2] Waiting for CloseNotification' \
+    'timeout=0. The next test step calls CloseNotification for this exact ID.' \
+    '[]' "{'urgency': <byte 1>}" 0
+recalled_id=$last_id
+
+next 'Call CloseNotification for the sender-recall notification'
+close_notification "$recalled_id"
+
+next 'Send the initial replaces_id notification'
+notify \
+    'Protocol Tests' 0 'system-run' \
+    '[REPLACES_ID 1/2] Initial content' \
+    'The next test step sends updated content using this exact notification ID.' \
+    '[]' "{'urgency': <byte 1>}" 0
+replacement_id=$last_id
+
+next 'Replace the preceding notification by ID'
+notify \
+    'Protocol Tests' "$replacement_id" 'system-run' \
+    '[REPLACES_ID 2/2] Updated in place' \
+    'Same ID and a new revision. Expect one replacement popup and one updated notification-center row.' \
+    '[]' "{'urgency': <byte 1>}" 0
+
+next 'Send the initial stack-tag notification'
+notify \
+    'Download Manager' 0 'folder-download' \
+    '[STACK TAG 1/2] Download at 25%' \
+    'The next test step uses the same application and x-dunst-stack-tag to update this in place.' \
+    '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" 0
+
+next 'Replace the preceding notification by stack tag'
+notify \
+    'Download Manager' 0 'folder-download' \
+    '[STACK TAG 2/2] Download complete' \
+    'Same application and stack tag. Expect the 25% notification to be replaced in place.' \
+    '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" 0
+
+printf '\nAll test steps have run. No cleanup was performed.\n'
+printf 'Press Enter to close this terminal...'
+IFS= read -r _ || true
