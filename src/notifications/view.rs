@@ -540,21 +540,32 @@ impl Center {
         };
 
         let mut views = self.group_views.borrow_mut();
-        while views.len() < groups.len() {
-            let view = GroupView::new(
-                &self.collapsed,
-                &self.popover,
-                &self.manager,
-                self.interactive,
-            );
-            self.groups.append(&view.container);
+        let mut previous = None;
+        let mut existing = std::mem::take(&mut *views);
+        for group in groups {
+            let mut view = existing
+                .iter()
+                .position(|view| view.key == group.key)
+                .map(|index| existing.remove(index))
+                .unwrap_or_else(|| {
+                    GroupView::new(
+                        group.key.clone(),
+                        &self.collapsed,
+                        &self.popover,
+                        &self.manager,
+                        self.interactive,
+                    )
+                });
+            view.update(group);
+            if view.container.parent().is_none() {
+                self.groups.append(&view.container);
+            }
+            self.groups
+                .reorder_child_after(&view.container, previous.as_ref());
+            previous = Some(view.container.clone());
             views.push(view);
         }
-        for (view, group) in views.iter_mut().zip(groups.iter().copied()) {
-            view.update(group);
-        }
-        while views.len() > groups.len() {
-            let view = views.pop().expect("group view count exceeds snapshot");
+        for view in existing {
             self.groups.remove(&view.container);
         }
         self.stack.set_visible_child_name(if !snapshot.available {
@@ -614,7 +625,7 @@ struct GroupView {
     rows: gtk::Box,
     revealer: gtk::Revealer,
     row_views: Vec<RowView>,
-    key: Rc<RefCell<String>>,
+    key: String,
     notifications: Rc<RefCell<Vec<(u32, bool)>>>,
     collapsed: Rc<RefCell<HashSet<String>>>,
     manager: std::rc::Weak<Manager>,
@@ -623,6 +634,7 @@ struct GroupView {
 
 impl GroupView {
     fn new(
+        key: String,
         collapsed: &Rc<RefCell<HashSet<String>>>,
         popover: &gtk::Popover,
         manager: &std::rc::Weak<Manager>,
@@ -663,7 +675,6 @@ impl GroupView {
             .child(&rows)
             .build();
 
-        let key = Rc::new(RefCell::new(String::new()));
         let notifications = Rc::new(RefCell::new(Vec::new()));
         let toggle = gtk::Button::builder()
             .focusable(false)
@@ -673,7 +684,7 @@ impl GroupView {
         toggle.add_css_class("notification-group-toggle");
         toggle.connect_clicked({
             let collapsed = Rc::clone(collapsed);
-            let key = Rc::clone(&key);
+            let key = key.clone();
             let revealer = revealer.clone();
             let disclosure = disclosure.clone();
             let popover = popover.clone();
@@ -681,11 +692,10 @@ impl GroupView {
                 let reveal = !revealer.reveals_child();
                 revealer.set_reveal_child(reveal);
                 disclosure.set_text(if reveal { "▾" } else { "▸" });
-                let key = key.borrow().clone();
                 if reveal {
                     collapsed.borrow_mut().remove(&key);
                 } else {
-                    collapsed.borrow_mut().insert(key);
+                    collapsed.borrow_mut().insert(key.clone());
                 }
                 glib::timeout_add_local_once(Duration::from_millis(160), {
                     let popover = popover.clone();
@@ -731,6 +741,7 @@ impl GroupView {
     }
 
     fn update(&mut self, group: &super::model::Group) {
+        debug_assert_eq!(self.key, group.key);
         let (name, icon) = application(group);
         self.image.clear();
         if let Some(icon) = icon {
@@ -738,7 +749,6 @@ impl GroupView {
         }
         self.name.set_label(&name);
         self.count.set_label(&group.notifications.len().to_string());
-        self.key.replace(group.key.clone());
         self.notifications.replace(
             group
                 .notifications
@@ -749,16 +759,24 @@ impl GroupView {
 
         let is_collapsed = self.collapsed.borrow().contains(&group.key);
 
-        while self.row_views.len() < group.notifications.len() {
-            let view = RowView::new(&self.manager, self.interactive);
-            self.rows.append(&view.container);
+        let mut previous = None;
+        let mut existing = std::mem::take(&mut self.row_views);
+        for notification in &group.notifications {
+            let view = existing
+                .iter()
+                .position(|view| view.id == notification.id)
+                .map(|index| existing.remove(index))
+                .unwrap_or_else(|| RowView::new(notification.id, &self.manager, self.interactive));
+            view.update(notification);
+            if view.container.parent().is_none() {
+                self.rows.append(&view.container);
+            }
+            self.rows
+                .reorder_child_after(&view.container, previous.as_ref());
+            previous = Some(view.container.clone());
             self.row_views.push(view);
         }
-        for (view, notification) in self.row_views.iter().zip(&group.notifications) {
-            view.update(notification);
-        }
-        while self.row_views.len() > group.notifications.len() {
-            let view = self.row_views.pop().expect("row view count exceeds group");
+        for view in existing {
             self.rows.remove(&view.container);
         }
 
@@ -769,16 +787,17 @@ impl GroupView {
 }
 
 struct RowView {
+    id: u32,
     container: gtk::Button,
     summary: gtk::Label,
     time: gtk::Label,
     body: gtk::Label,
     progress: gtk::ProgressBar,
-    target: Rc<Cell<(u32, bool)>>,
+    active: Rc<Cell<bool>>,
 }
 
 impl RowView {
-    fn new(manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
+    fn new(id: u32, manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
         let content = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
@@ -814,14 +833,13 @@ impl RowView {
         let container = gtk::Button::builder().child(&content).build();
         container.add_css_class("notification-row");
 
-        let target = Rc::new(Cell::new((0, false)));
+        let active = Rc::new(Cell::new(false));
         if interactive {
             container.connect_clicked({
                 let manager = manager.clone();
-                let target = Rc::clone(&target);
                 move |_| {
                     if let Some(manager) = manager.upgrade() {
-                        manager.invoke_default(target.get().0);
+                        manager.invoke_default(id);
                     }
                 }
             });
@@ -830,13 +848,12 @@ impl RowView {
             dismiss.connect_released({
                 let container = container.clone();
                 let manager = manager.clone();
-                let target = Rc::clone(&target);
+                let active = Rc::clone(&active);
                 move |_, _, x, y| {
                     if container.contains(x, y)
                         && let Some(manager) = manager.upgrade()
                     {
-                        let (id, active) = target.get();
-                        manager.dismiss(id, active);
+                        manager.dismiss(id, active.get());
                     }
                 }
             });
@@ -844,17 +861,19 @@ impl RowView {
         }
 
         Self {
+            id,
             container,
             summary,
             time,
             body,
             progress,
-            target,
+            active,
         }
     }
 
     fn update(&self, notification: &super::model::Notification) {
-        self.target.set((notification.id, notification.active));
+        debug_assert_eq!(self.id, notification.id);
+        self.active.set(notification.active);
         if notification.urgency.as_deref() == Some("critical") {
             self.container.add_css_class("critical");
         } else {
