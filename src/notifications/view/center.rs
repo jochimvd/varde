@@ -245,6 +245,7 @@ pub(super) fn update_group_order(order: &mut Vec<String>, keys: &[String], reset
 
 struct GroupView {
     container: gtk::Box,
+    icon: gtk::Stack,
     image: gtk::Image,
     name: gtk::Label,
     count: gtk::Label,
@@ -272,7 +273,18 @@ impl GroupView {
         container.add_css_class("notification-group");
 
         let image = gtk::Image::builder().pixel_size(20).build();
-        image.add_css_class("notification-group-icon");
+        let fallback = gtk::Box::builder()
+            .halign(gtk::Align::Center)
+            .valign(gtk::Align::Center)
+            .build();
+        fallback.add_css_class("notification-group-icon-fallback");
+        let icon = gtk::Stack::builder()
+            .width_request(20)
+            .height_request(20)
+            .build();
+        icon.add_named(&image, Some("image"));
+        icon.add_named(&fallback, Some("fallback"));
+        icon.add_css_class("notification-group-icon");
         let name = gtk::Label::builder()
             .hexpand(true)
             .xalign(0.0)
@@ -287,7 +299,7 @@ impl GroupView {
             .valign(gtk::Align::Center)
             .build();
         header.add_css_class("notification-group-header");
-        header.append(&image);
+        header.append(&icon);
         header.append(&name);
         header.append(&count);
         header.append(&disclosure);
@@ -383,6 +395,7 @@ impl GroupView {
         container.append(&revealer);
         Self {
             container,
+            icon,
             image,
             name,
             count,
@@ -403,6 +416,9 @@ impl GroupView {
         self.image.clear();
         if let Some(icon) = icon {
             self.image.set_from_gicon(&icon);
+            self.icon.set_visible_child_name("image");
+        } else {
+            self.icon.set_visible_child_name("fallback");
         }
         self.name.set_label(&name);
         self.count.set_label(&group.notifications.len().to_string());
