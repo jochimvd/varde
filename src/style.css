@@ -382,7 +382,7 @@ window.notification-popups {
 
 .notification-group-header {
     min-height: 34px;
-    padding: 0 10px;
+    padding: 0 10px 0 6px;
     font-weight: bold;
 }
 
@@ -402,6 +402,13 @@ window.notification-popups {
 
 .notification-group-icon {
     min-width: 20px;
+}
+
+.notification-group-icon-fallback {
+    min-width: 20px;
+    min-height: 20px;
+    border-radius: 50%;
+    background: @overlay_subtle_color;
 }
 
 .notification-group-count {
