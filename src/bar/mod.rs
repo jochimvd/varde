@@ -44,6 +44,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     let right = region("right", gtk::Align::End);
     left.set_hexpand(true);
     right.set_spacing(MODULE_GAP);
+    notifications.set_center_anchor(&window);
 
     left.append(&hyprland::widget());
 

@@ -16,7 +16,8 @@ use super::{
 };
 
 const PANEL_WIDTH: i32 = 460;
-const PANEL_GAP: i32 = 10;
+const PANEL_RIGHT: i32 = 20;
+const PANEL_TOP: i32 = 18;
 const MAX_CONTENT_HEIGHT: i32 = 520;
 
 pub(in crate::notifications) struct Center {
@@ -33,7 +34,7 @@ pub(in crate::notifications) struct Center {
 }
 
 impl Center {
-    pub fn new(anchor: &gtk::Button, manager: &Rc<Manager>, interactive: bool) -> Self {
+    pub fn new(anchor: &gtk::ApplicationWindow, manager: &Rc<Manager>, interactive: bool) -> Self {
         let popover = gtk::Popover::builder()
             .autohide(true)
             .has_arrow(false)
@@ -41,7 +42,7 @@ impl Center {
             .build();
         popover.add_css_class("notifications");
         popover.set_halign(gtk::Align::End);
-        popover.set_offset(0, PANEL_GAP);
+        popover.set_offset(-PANEL_RIGHT, PANEL_TOP);
         popover.set_parent(anchor);
         popover.connect_closed({
             let manager = Rc::downgrade(manager);

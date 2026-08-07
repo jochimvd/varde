@@ -17,8 +17,8 @@ use super::{
 
 const POPUP_NAME: &str = "varde-notification-popups";
 const POPUP_WIDTH: i32 = 400;
-const PANEL_GAP: i32 = 10;
-const POPUP_TOP: i32 = 42;
+const POPUP_RIGHT: i32 = 20;
+const POPUP_TOP: i32 = 50;
 const POPUP_PICTURE_SIZE: i32 = 54;
 pub(super) const MAX_POPUPS: usize = 5;
 
@@ -95,7 +95,7 @@ impl Popups {
         window.set_anchor(gtk4_layer_shell::Edge::Top, true);
         window.set_anchor(gtk4_layer_shell::Edge::Right, true);
         window.set_margin(gtk4_layer_shell::Edge::Top, POPUP_TOP);
-        window.set_margin(gtk4_layer_shell::Edge::Right, PANEL_GAP);
+        window.set_margin(gtk4_layer_shell::Edge::Right, POPUP_RIGHT);
         window.set_exclusive_zone(0);
         window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::None);
 
