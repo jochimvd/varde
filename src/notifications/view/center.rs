@@ -12,7 +12,7 @@ use super::{
         Manager,
         model::{Group, Notification, Snapshot},
     },
-    common::{application, message, notification_time, progress_bar},
+    common::{application, message, notification_time, progress_bar, set_picture},
 };
 
 const PANEL_WIDTH: i32 = 460;
@@ -454,6 +454,7 @@ impl GroupView {
 
 struct RowView {
     container: gtk::Button,
+    picture: gtk::Image,
     summary: gtk::Label,
     time: gtk::Label,
     body: gtk::Label,
@@ -463,8 +464,9 @@ struct RowView {
 
 impl RowView {
     fn new(manager: &std::rc::Weak<Manager>, interactive: bool) -> Self {
-        let content = gtk::Box::builder()
+        let text = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
+            .hexpand(true)
             .build();
 
         let summary = gtk::Label::builder()
@@ -481,7 +483,7 @@ impl RowView {
             .build();
         header.append(&summary);
         header.append(&time);
-        content.append(&header);
+        text.append(&header);
 
         let body = gtk::Label::builder()
             .xalign(0.0)
@@ -491,9 +493,24 @@ impl RowView {
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         body.add_css_class("notification-body");
-        content.append(&body);
+        text.append(&body);
         let progress = progress_bar(0);
-        content.append(&progress);
+        text.append(&progress);
+
+        let picture = gtk::Image::builder()
+            .pixel_size(48)
+            .width_request(48)
+            .height_request(48)
+            .valign(gtk::Align::Start)
+            .build();
+        picture.set_overflow(gtk::Overflow::Hidden);
+        picture.add_css_class("notification-picture");
+        let content = gtk::Box::builder()
+            .spacing(10)
+            .valign(gtk::Align::Start)
+            .build();
+        content.append(&picture);
+        content.append(&text);
 
         let container = gtk::Button::builder().child(&content).build();
         container.add_css_class("notification-row");
@@ -548,6 +565,7 @@ impl RowView {
 
         Self {
             container,
+            picture,
             summary,
             time,
             body,
@@ -564,6 +582,10 @@ impl RowView {
             self.container.remove_css_class("critical");
         }
         self.summary.set_label(&notification.summary);
+
+        self.picture.clear();
+        self.picture
+            .set_visible(set_picture(&self.picture, notification));
 
         let time = notification_time(notification.received_at);
         self.time.set_label(time.as_deref().unwrap_or_default());

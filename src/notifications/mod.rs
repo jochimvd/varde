@@ -1,4 +1,5 @@
 mod daemon;
+mod image;
 mod model;
 mod state;
 mod view;

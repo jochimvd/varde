@@ -7,15 +7,16 @@ use std::{
 use zbus::{interface, zvariant::OwnedValue};
 
 use super::{
+    image::{self, Thumbnail},
     model::{self, Snapshot},
-    state::{CloseReason, ImageData, Incoming, Store, Urgency},
+    state::{CloseReason, Incoming, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
-const MAX_IMAGE_DIMENSION: i32 = 16_384;
-const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_TEXT_BYTES: usize = 4 * 1024;
+const MAX_BODY_BYTES: usize = 64 * 1024;
 
 #[derive(Clone)]
 pub(super) struct Control {
@@ -60,6 +61,7 @@ impl Control {
 
 enum Command {
     Wake,
+    EmitClosed(u32, CloseReason),
     ToggleDnd,
     Clear,
     Dismiss(u32),
@@ -148,6 +150,9 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
 
         match command {
             Command::Wake => continue,
+            Command::EmitClosed(id, reason) => {
+                emit_closed(&connection, &[(id, reason)]);
+            }
             Command::ToggleDnd => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
                 let dnd = !store.dnd();
@@ -283,37 +288,40 @@ impl Notifications {
         hints: HashMap<String, OwnedValue>,
         expire_timeout: i32,
     ) -> u32 {
-        let image_data = image_hint(&hints);
-        let image = string_hint(&hints, "image-path")
-            .or_else(|| string_hint(&hints, "image_path"))
-            .unwrap_or_default();
+        let thumbnail = thumbnail_hint(&hints);
         let incoming = Incoming {
             replaces_id,
-            app_name: app_name.into(),
-            app_icon: app_icon.into(),
-            image,
-            image_data,
+            app_name: truncate_utf8(app_name, MAX_TEXT_BYTES),
+            app_icon: truncate_utf8(app_icon, MAX_TEXT_BYTES),
+            thumbnail,
             progress: progress_hint(&hints),
-            summary: summary.into(),
-            body: body.into(),
+            summary: truncate_utf8(summary, MAX_TEXT_BYTES),
+            body: truncate_utf8(body, MAX_BODY_BYTES),
             has_default_action: actions.chunks_exact(2).any(|pair| pair[0] == "default"),
             urgency: urgency(&hints),
-            desktop_entry: string_hint(&hints, "desktop-entry").unwrap_or_default(),
+            desktop_entry: string_hint(&hints, "desktop-entry")
+                .map(|value| truncate_utf8(&value, MAX_TEXT_BYTES))
+                .unwrap_or_default(),
             tag: string_hint(&hints, "x-canonical-private-synchronous")
                 .or_else(|| string_hint(&hints, "x-dunst-stack-tag"))
+                .map(|value| truncate_utf8(&value, MAX_TEXT_BYTES))
                 .unwrap_or_default(),
             transient: bool_hint(&hints, "transient"),
             resident: bool_hint(&hints, "resident"),
             timeout_ms: expire_timeout,
         };
-        let id = self
+        let (id, evicted) = self
             .0
             .store
             .lock()
             .expect("notification store poisoned")
-            .notify(incoming);
+            .notify_with_eviction(incoming);
         self.0.publish();
-        self.0.wake();
+        if let Some((id, reason)) = evicted {
+            let _ = self.0.commands.send(Command::EmitClosed(id, reason));
+        } else {
+            self.0.wake();
+        }
         id
     }
 
@@ -410,13 +418,23 @@ fn progress_hint(hints: &HashMap<String, OwnedValue>) -> Option<u8> {
     u8::try_from(value).ok().filter(|value| *value <= 100)
 }
 
-fn image_hint(hints: &HashMap<String, OwnedValue>) -> Option<ImageData> {
+fn image_hint(hints: &HashMap<String, OwnedValue>) -> Option<Thumbnail> {
     ["image-data", "image_data", "icon_data"]
         .into_iter()
         .find_map(|name| hints.get(name).and_then(image_data))
 }
 
-fn image_data(value: &OwnedValue) -> Option<ImageData> {
+fn thumbnail_hint(hints: &HashMap<String, OwnedValue>) -> Option<Thumbnail> {
+    image_hint(hints).or_else(|| {
+        ["image-path", "image_path"].into_iter().find_map(|name| {
+            string_hint(hints, name)
+                .filter(|path| path.len() <= MAX_TEXT_BYTES)
+                .and_then(|path| image::from_path(&path))
+        })
+    })
+}
+
+fn image_data(value: &OwnedValue) -> Option<Thumbnail> {
     let structure = zbus::zvariant::Structure::try_from(value.try_clone().ok()?).ok()?;
     let (width, height, rowstride, has_alpha, bits, channels, bytes): (
         i32,
@@ -427,37 +445,41 @@ fn image_data(value: &OwnedValue) -> Option<ImageData> {
         i32,
         Vec<u8>,
     ) = structure.try_into().ok()?;
-    let channels = usize::try_from(channels).ok()?;
-    let rowstride = usize::try_from(rowstride).ok()?;
-    let height_usize = usize::try_from(height).ok()?;
-    let width_usize = usize::try_from(width).ok()?;
-    let expected_channels = if has_alpha { 4 } else { 3 };
-    let minimum_stride = width_usize.checked_mul(channels)?;
-    let required = rowstride.checked_mul(height_usize)?;
-    if width <= 0
-        || height <= 0
-        || width > MAX_IMAGE_DIMENSION
-        || height > MAX_IMAGE_DIMENSION
-        || bits != 8
-        || channels != expected_channels
-        || rowstride < minimum_stride
-        || required > MAX_IMAGE_BYTES
-        || bytes.len() < required
-    {
-        return None;
+    image::from_raw(width, height, rowstride, has_alpha, bits, channels, bytes)
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    let mut end = value.len().min(max_bytes);
+    while !value.is_char_boundary(end) {
+        end -= 1;
     }
-    Some(ImageData {
-        width,
-        height,
-        rowstride,
-        has_alpha,
-        bytes: Arc::from(&bytes[..required]),
-    })
+    value[..end].to_string()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    use gdk_pixbuf::{Colorspace, Pixbuf};
+
     use super::*;
+
+    static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+
+    fn png(width: i32, height: i32, color: u32) -> std::path::PathBuf {
+        let number = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "varde-notification-hint-{}-{number}.png",
+            std::process::id()
+        ));
+        let pixbuf = Pixbuf::new(Colorspace::Rgb, true, 8, width, height).unwrap();
+        pixbuf.fill(color);
+        pixbuf.savev(&path, "png", &[]).unwrap();
+        path
+    }
 
     #[test]
     fn resident_actions_do_not_consume_notifications() {
@@ -571,7 +593,6 @@ mod tests {
             )]);
             let image = image_hint(&hints).unwrap();
             assert_eq!((image.width, image.height, image.rowstride), (2, 1, 8));
-            assert!(image.has_alpha);
             assert_eq!(image.bytes.len(), 8);
         }
     }
@@ -602,5 +623,88 @@ mod tests {
             ),
         ]);
         assert_eq!(image_hint(&hints).unwrap().bytes.as_ref(), &[1; 4]);
+    }
+
+    #[test]
+    fn valid_raw_images_take_priority_over_paths() {
+        let path = png(1, 1, 0x112233ff);
+        let hints = HashMap::from([
+            (
+                "image-data".into(),
+                raw_image_value(1, 1, 4, true, 8, 4, vec![9, 8, 7, 6]),
+            ),
+            (
+                "image-path".into(),
+                OwnedValue::from(zbus::zvariant::Str::from(path.to_str().unwrap())),
+            ),
+        ]);
+        assert_eq!(
+            thumbnail_hint(&hints).unwrap().bytes.as_ref(),
+            &[9, 8, 7, 6]
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_sources_fall_through_in_alias_order() {
+        let path = png(1, 1, 0x112233ff);
+        let hints = HashMap::from([
+            (
+                "image-data".into(),
+                raw_image_value(1, 1, 3, true, 8, 4, vec![0; 4]),
+            ),
+            (
+                "image-path".into(),
+                OwnedValue::from(zbus::zvariant::Str::from("/missing/image.png")),
+            ),
+            (
+                "image_path".into(),
+                OwnedValue::from(zbus::zvariant::Str::from(path.to_str().unwrap())),
+            ),
+        ]);
+        assert_eq!(
+            thumbnail_hint(&hints).unwrap().bytes.as_ref(),
+            &[0x11, 0x22, 0x33, 0xff]
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ignores_overlong_image_paths() {
+        let hints = HashMap::from([(
+            "image-path".into(),
+            OwnedValue::from(zbus::zvariant::Str::from("x".repeat(MAX_TEXT_BYTES + 1))),
+        )]);
+        assert!(thumbnail_hint(&hints).is_none());
+    }
+
+    #[test]
+    fn skips_invalid_aliases_before_the_first_valid_raw_image() {
+        let hints = HashMap::from([
+            (
+                "image-data".into(),
+                raw_image_value(1, 1, 3, true, 8, 4, vec![1; 4]),
+            ),
+            (
+                "image_data".into(),
+                raw_image_value(1, 1, 4, true, 8, 4, vec![2; 4]),
+            ),
+        ]);
+        assert_eq!(image_hint(&hints).unwrap().bytes.as_ref(), &[2; 4]);
+    }
+
+    #[test]
+    fn truncates_utf8_without_splitting_code_points() {
+        assert_eq!(truncate_utf8("abéz", 3), "ab");
+        assert_eq!(truncate_utf8("abéz", 4), "abé");
+        assert_eq!(truncate_utf8("short", MAX_TEXT_BYTES), "short");
+        assert_eq!(
+            truncate_utf8(&"x".repeat(MAX_TEXT_BYTES + 1), MAX_TEXT_BYTES).len(),
+            MAX_TEXT_BYTES
+        );
+        assert_eq!(
+            truncate_utf8(&"x".repeat(MAX_BODY_BYTES + 1), MAX_BODY_BYTES).len(),
+            MAX_BODY_BYTES
+        );
     }
 }

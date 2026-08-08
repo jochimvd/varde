@@ -6,20 +6,16 @@ use gtk::{gdk, glib, prelude::*};
 use super::super::model::{Group, Notification};
 
 pub(super) fn set_picture(image: &gtk::Image, notification: &Notification) -> bool {
-    if let Some(data) = &notification.image_data {
-        let format = if data.has_alpha {
-            gdk::MemoryFormat::R8g8b8a8
-        } else {
-            gdk::MemoryFormat::R8g8b8
-        };
+    if let Some(data) = &notification.thumbnail {
         let bytes = glib::Bytes::from_owned(data.bytes.clone());
-        let texture =
-            gdk::MemoryTexture::new(data.width, data.height, format, &bytes, data.rowstride);
+        let texture = gdk::MemoryTexture::new(
+            data.width,
+            data.height,
+            gdk::MemoryFormat::R8g8b8a8,
+            &bytes,
+            data.rowstride,
+        );
         image.set_from_gicon(&texture);
-        return true;
-    }
-    if let Some(icon) = notification.image.as_deref().map(notification_icon) {
-        image.set_from_gicon(&icon);
         return true;
     }
     false
