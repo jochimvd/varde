@@ -446,14 +446,16 @@ window.notification-popups {
     color: @text_secondary_color;
 }
 
-.notification-center-empty,
-.notification-center-unavailable {
-    min-height: 90px;
-    padding: 0 18px;
+.notification-center-empty {
+    min-height: 98px;
+    border-radius: 6px;
     color: @text_muted_color;
+    background: @overlay_subtle_color;
 }
 
 .notification-center-unavailable {
+    min-height: 90px;
+    padding: 0 18px;
     color: @critical_color;
 }
 

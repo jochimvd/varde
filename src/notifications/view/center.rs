@@ -105,7 +105,8 @@ impl Center {
             .build();
         scroll.add_css_class("notification-center-scroll");
 
-        let empty = message("No notifications", "notification-center-empty");
+        let empty = gtk::Label::new(Some("All caught up"));
+        empty.add_css_class("notification-center-empty");
         let unavailable = message(
             "Notifications are unavailable",
             "notification-center-unavailable",
