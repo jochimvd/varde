@@ -80,4 +80,27 @@ mod tests {
         );
         assert_eq!(state.update(&reduced, false).len(), 1);
     }
+
+    #[test]
+    fn popup_queue_reveals_oldest_undisplayed_notifications_first() {
+        let notifications = (1..=10)
+            .rev()
+            .map(|id| (id, u64::from(id)))
+            .collect::<Vec<_>>();
+        let mut state = PopupState::default();
+
+        assert_eq!(
+            state.update(&super::super::model::test_snapshot(&notifications), false),
+            vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+        );
+
+        let remaining = notifications
+            .into_iter()
+            .filter(|(id, _)| *id != 1)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            state.update(&super::super::model::test_snapshot(&remaining), false),
+            vec![(6, 6)]
+        );
+    }
 }

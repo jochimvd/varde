@@ -50,7 +50,7 @@ impl PopupState {
             self.visible.clear();
             return Vec::new();
         }
-        let active = snapshot
+        let mut active = snapshot
             .groups
             .iter()
             .flat_map(|group| &group.notifications)
@@ -66,6 +66,7 @@ impl PopupState {
                 displayed.push((notification.id, notification.revision));
             }
         }
+        active.sort_unstable_by_key(|notification| notification.revision);
         let mut available = MAX_POPUPS.saturating_sub(self.visible.len());
         for notification in active {
             if available == 0 || self.displayed.contains_key(&notification.id) {
