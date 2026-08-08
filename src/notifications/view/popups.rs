@@ -202,6 +202,7 @@ fn popup_widget(
         .valign(gtk::Align::Start)
         .build();
     picture_widget.set_overflow(gtk::Overflow::Hidden);
+    picture_widget.add_css_class("notification-picture");
     picture_widget.add_css_class("notification-popup-picture");
     let has_picture = set_picture(&picture_widget, notification);
     picture_widget.set_visible(has_picture);

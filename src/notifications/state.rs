@@ -1,9 +1,8 @@
-use std::{
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const MAX_HISTORY: usize = 50;
+pub(super) use super::image::Thumbnail;
+
+const MAX_NOTIFICATIONS: usize = 100;
 const LOW_TIMEOUT: Duration = Duration::from_secs(5);
 const NORMAL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -22,8 +21,7 @@ pub(super) struct Notification {
     pub received_at: i64,
     pub app_name: String,
     pub app_icon: String,
-    pub image: String,
-    pub image_data: Option<ImageData>,
+    pub thumbnail: Option<Thumbnail>,
     pub progress: Option<u8>,
     pub summary: String,
     pub body: String,
@@ -33,22 +31,12 @@ pub(super) struct Notification {
     pub resident: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ImageData {
-    pub width: i32,
-    pub height: i32,
-    pub rowstride: usize,
-    pub has_alpha: bool,
-    pub bytes: Arc<[u8]>,
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct Incoming {
     pub replaces_id: u32,
     pub app_name: String,
     pub app_icon: String,
-    pub image: String,
-    pub image_data: Option<ImageData>,
+    pub thumbnail: Option<Thumbnail>,
     pub progress: Option<u8>,
     pub summary: String,
     pub body: String,
@@ -87,8 +75,20 @@ pub(super) struct Store {
 }
 
 impl Store {
+    #[cfg(test)]
     pub fn notify(&mut self, incoming: Incoming) -> u32 {
+        self.notify_with_eviction(incoming).0
+    }
+
+    pub fn notify_with_eviction(
+        &mut self,
+        incoming: Incoming,
+    ) -> (u32, Option<(u32, CloseReason)>) {
         let replacement = self.replacement_index(&incoming);
+        let evicted = replacement
+            .is_none()
+            .then(|| self.evict_at_capacity())
+            .flatten();
         let id = replacement
             .map(|index| self.active[index].notification.id)
             .unwrap_or_else(|| self.allocate_id());
@@ -101,8 +101,7 @@ impl Store {
                 received_at: unix_now(),
                 app_name: incoming.app_name,
                 app_icon: incoming.app_icon,
-                image: incoming.image,
-                image_data: incoming.image_data,
+                thumbnail: incoming.thumbnail,
                 progress: incoming.progress,
                 summary: incoming.summary,
                 body: incoming.body,
@@ -123,7 +122,7 @@ impl Store {
         } else {
             self.active.insert(0, active);
         }
-        id
+        (id, evicted)
     }
 
     pub fn close(&mut self, id: u32, keep_history: bool) -> bool {
@@ -134,12 +133,9 @@ impl Store {
         else {
             return false;
         };
-        let mut active = self.active.remove(index);
+        let active = self.active.remove(index);
         if keep_history && !active.transient {
-            active.notification.image.clear();
-            active.notification.image_data = None;
             self.history.insert(0, active.notification);
-            self.history.truncate(MAX_HISTORY);
         }
         true
     }
@@ -249,6 +245,30 @@ impl Store {
         })
     }
 
+    fn evict_at_capacity(&mut self) -> Option<(u32, CloseReason)> {
+        if self.active.len() + self.history.len() < MAX_NOTIFICATIONS {
+            return None;
+        }
+        let active = self
+            .active
+            .iter()
+            .enumerate()
+            .map(|(index, active)| (active.notification.revision, true, index));
+        let history = self
+            .history
+            .iter()
+            .enumerate()
+            .map(|(index, notification)| (notification.revision, false, index));
+        let (_, is_active, index) = active.chain(history).min_by_key(|item| item.0)?;
+        if is_active {
+            let id = self.active.remove(index).notification.id;
+            Some((id, CloseReason::Expired))
+        } else {
+            self.history.remove(index);
+            None
+        }
+    }
+
     fn allocate_id(&mut self) -> u32 {
         loop {
             self.next_id = self.next_id.wrapping_add(1);
@@ -297,6 +317,8 @@ fn unix_now() -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     fn incoming(summary: &str) -> Incoming {
@@ -472,14 +494,13 @@ mod tests {
     #[test]
     fn dismissal_and_expiration_preserve_history_except_for_transient_items() {
         let mut store = Store::default();
+        let pixels: Arc<[u8]> = Arc::from([0, 0, 0, 0]);
         let regular = store.notify(Incoming {
-            image: "/tmp/picture.png".into(),
-            image_data: Some(ImageData {
+            thumbnail: Some(Thumbnail {
                 width: 1,
                 height: 1,
                 rowstride: 4,
-                has_alpha: true,
-                bytes: Arc::from([0, 0, 0, 0]),
+                bytes: Arc::clone(&pixels),
             }),
             ..incoming("regular")
         });
@@ -495,8 +516,10 @@ mod tests {
             [regular]
         );
         let archived = store.history().next().unwrap();
-        assert!(archived.image.is_empty());
-        assert!(archived.image_data.is_none());
+        assert!(Arc::ptr_eq(
+            &archived.thumbnail.as_ref().unwrap().bytes,
+            &pixels
+        ));
     }
 
     #[test]
@@ -510,13 +533,73 @@ mod tests {
     }
 
     #[test]
-    fn history_is_bounded() {
+    fn active_and_history_share_one_bound() {
         let mut store = Store::default();
-        for index in 0..MAX_HISTORY + 5 {
+        for index in 0..MAX_NOTIFICATIONS + 5 {
             let id = store.notify(incoming(&index.to_string()));
             store.close(id, true);
         }
-        assert_eq!(store.history().count(), MAX_HISTORY);
+        assert_eq!(
+            store.active().count() + store.history().count(),
+            MAX_NOTIFICATIONS
+        );
+        assert_eq!(store.history().next().unwrap().summary, "104");
+    }
+
+    #[test]
+    fn replacement_at_capacity_does_not_evict() {
+        let mut store = Store::default();
+        let first = store.notify(incoming("first"));
+        for index in 1..MAX_NOTIFICATIONS {
+            store.notify(incoming(&index.to_string()));
+        }
+        let (id, evicted) = store.notify_with_eviction(Incoming {
+            replaces_id: first,
+            ..incoming("replacement")
+        });
+        assert_eq!(id, first);
+        assert!(evicted.is_none());
+        assert_eq!(store.active().count(), MAX_NOTIFICATIONS);
+    }
+
+    #[test]
+    fn evicts_the_oldest_notification_across_active_and_history() {
+        let mut store = Store::default();
+        let oldest = store.notify(incoming("history"));
+        store.close(oldest, true);
+        for index in 1..MAX_NOTIFICATIONS {
+            store.notify(incoming(&index.to_string()));
+        }
+        let (_, evicted) = store.notify_with_eviction(incoming("new"));
+        assert!(evicted.is_none());
+        assert!(
+            !store
+                .history()
+                .any(|notification| notification.id == oldest)
+        );
+        assert_eq!(
+            store.active().count() + store.history().count(),
+            MAX_NOTIFICATIONS
+        );
+    }
+
+    #[test]
+    fn active_capacity_eviction_is_reported_as_expired() {
+        let mut store = Store::default();
+        let oldest = store.notify(incoming("oldest active"));
+        let archived = store.notify(incoming("newer history"));
+        store.close(archived, true);
+        for index in 2..MAX_NOTIFICATIONS {
+            store.notify(incoming(&index.to_string()));
+        }
+        let (_, evicted) = store.notify_with_eviction(incoming("new"));
+        assert_eq!(evicted, Some((oldest, CloseReason::Expired)));
+        assert!(!store.active().any(|notification| notification.id == oldest));
+        assert!(
+            store
+                .history()
+                .any(|notification| notification.id == archived)
+        );
     }
 
     #[test]
