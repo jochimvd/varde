@@ -2,7 +2,6 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
     rc::Rc,
-    time::Duration,
 };
 
 use gtk::{gdk, glib, prelude::*};
@@ -19,6 +18,7 @@ const PANEL_WIDTH: i32 = 460;
 const PANEL_RIGHT: i32 = 20;
 const PANEL_TOP: i32 = 18;
 const MAX_CONTENT_HEIGHT: i32 = 520;
+const GROUP_TRANSITION_DURATION: u32 = 150;
 
 pub(in crate::notifications) struct Center {
     popover: gtk::Popover,
@@ -212,6 +212,10 @@ impl Center {
         self.dnd.set_sensitive(snapshot.available);
         self.clear
             .set_sensitive(snapshot.available && snapshot.count > 0);
+        if self.popover.is_visible() {
+            self.popover.queue_resize();
+            self.popover.present();
+        }
     }
 
     pub fn show(&self, snapshot: &Snapshot) {
@@ -308,7 +312,7 @@ impl GroupView {
             .orientation(gtk::Orientation::Vertical)
             .build();
         let revealer = gtk::Revealer::builder()
-            .transition_duration(150)
+            .transition_duration(GROUP_TRANSITION_DURATION)
             .transition_type(gtk::RevealerTransitionType::SlideDown)
             .child(&rows)
             .build();
@@ -354,9 +358,17 @@ impl GroupView {
                 } else {
                     collapsed.borrow_mut().insert(pressed);
                 }
-                glib::timeout_add_local_once(Duration::from_millis(160), {
+                revealer.add_tick_callback({
                     let popover = popover.clone();
-                    move || popover.queue_resize()
+                    move |revealer, _| {
+                        popover.queue_resize();
+                        popover.present();
+                        if revealer.reveals_child() == revealer.is_child_revealed() {
+                            glib::ControlFlow::Break
+                        } else {
+                            glib::ControlFlow::Continue
+                        }
+                    }
                 });
             }
         });
@@ -446,7 +458,11 @@ impl GroupView {
             self.rows.remove(&view.container);
         }
 
+        // Recycled views adopt snapshot state immediately; only direct toggles animate.
+        self.revealer.set_transition_duration(0);
         self.revealer.set_reveal_child(!is_collapsed);
+        self.revealer
+            .set_transition_duration(GROUP_TRANSITION_DURATION);
         self.disclosure
             .set_text(if is_collapsed { "▸" } else { "▾" });
     }
