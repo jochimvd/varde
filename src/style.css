@@ -161,7 +161,40 @@ popover.tray-menu separator {
 }
 
 .privacy {
-    color: @accent_color;
+    color: @text_secondary_color;
+}
+
+.privacy-pill {
+    min-width: 10px;
+    min-height: 12px;
+    padding: 4px 5px;
+    border: 2px solid @accent_color;
+    border-radius: 8px;
+    background: alpha(@accent_color, 0.14);
+    margin-left: 0;
+    transform: scale(1);
+    transform-origin: calc(100% - 1px) 50%;
+    transition: margin-left 300ms ease-in-out,
+                transform 300ms ease-in-out,
+                background-color 300ms ease-in-out,
+                border-radius 300ms ease-in-out;
+}
+
+.privacy.collapsed .privacy-pill {
+    border-radius: 999px;
+    background: @accent_color;
+    /* CSS transforms do not shrink GTK layout: 24px pill - 6px dot. */
+    margin-left: -18px;
+    transform: scale(0.25);
+}
+
+.privacy-icons {
+    transition: opacity 150ms ease-in-out 100ms;
+}
+
+.privacy.collapsed .privacy-icons {
+    opacity: 0;
+    transition-delay: 0ms;
 }
 
 tooltip {
