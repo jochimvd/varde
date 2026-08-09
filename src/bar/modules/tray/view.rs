@@ -8,14 +8,10 @@ use super::{
 };
 use crate::background;
 
-const ICON_GAP: i32 = 2;
 const MENU_OFFSET: i32 = 12;
 
 pub fn widget(menu_visibility: impl Fn(bool) + 'static) -> gtk::Box {
-    let tray = gtk::Box::builder()
-        .spacing(ICON_GAP)
-        .valign(gtk::Align::Center)
-        .build();
+    let tray = gtk::Box::builder().valign(gtk::Align::Center).build();
     tray.set_widget_name("tray");
     tray.add_css_class("tray");
 
