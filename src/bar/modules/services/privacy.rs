@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs, io::BufReader, path::Path, thread};
+use std::{cell::Cell, collections::HashMap, fs, io::BufReader, path::Path, rc::Rc, thread};
 
 use gtk::prelude::*;
 use serde_json::Value;
@@ -7,6 +7,7 @@ use crate::background;
 
 const ICON_SIZE: i32 = 14;
 const ICON_GAP: i32 = 7;
+const COLLAPSED_HOVER_SIZE: f32 = 12.0;
 const NODE_TYPE: &str = "PipeWire:Interface:Node";
 const SCREEN_SHARE_PREFIX: &str = "xdph-streaming-";
 
@@ -40,24 +41,49 @@ pub fn widget() -> gtk::Box {
     privacy.append(&pill);
 
     let hover_intent = crate::bar::HoverIntent::default();
+    let pointer_inside = Rc::new(Cell::new(false));
     let hover = gtk::EventControllerMotion::new();
-    hover.connect_enter({
+    let update_hover = Rc::new({
         let privacy = privacy.clone();
+        let pill = pill.clone();
         let revealer = revealer.clone();
         let hover_intent = hover_intent.clone();
-        move |_, _, _| {
-            let privacy = privacy.clone();
-            let revealer = revealer.clone();
-            hover_intent.enter(move || {
-                set_expanded(&privacy, &revealer, true);
-            });
+        let pointer_inside = pointer_inside.clone();
+        move |x: f64, y: f64| {
+            let inside = !privacy.has_css_class("collapsed")
+                || pill.compute_bounds(&privacy).is_some_and(|bounds| {
+                    let half = COLLAPSED_HOVER_SIZE / 2.0;
+                    let center_x = bounds.x() + bounds.width() / 2.0;
+                    let center_y = bounds.y() + bounds.height() / 2.0;
+                    (x as f32 - center_x).abs() <= half && (y as f32 - center_y).abs() <= half
+                });
+            if inside == pointer_inside.replace(inside) {
+                return;
+            }
+            if inside {
+                let privacy = privacy.clone();
+                let revealer = revealer.clone();
+                hover_intent.enter(move || set_expanded(&privacy, &revealer, true));
+            } else {
+                hover_intent.leave();
+                let privacy = privacy.clone();
+                let revealer = revealer.clone();
+                hover_intent.retract(move || set_expanded(&privacy, &revealer, false));
+            }
         }
     });
+    hover.connect_enter({
+        let update_hover = update_hover.clone();
+        move |_, x, y| update_hover(x, y)
+    });
+    hover.connect_motion(move |_, x, y| update_hover(x, y));
     hover.connect_leave({
         let privacy = privacy.clone();
         let revealer = revealer.clone();
         let hover_intent = hover_intent.clone();
+        let pointer_inside = pointer_inside.clone();
         move |_| {
+            pointer_inside.set(false);
             hover_intent.leave();
             let privacy = privacy.clone();
             let revealer = revealer.clone();
