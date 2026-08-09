@@ -4,7 +4,10 @@ use zbus::blocking::{Connection, Proxy};
 use crate::background;
 
 pub fn widget() -> gtk::Button {
-    let button = gtk::Button::builder().focusable(false).build();
+    let button = gtk::Button::builder()
+        .focusable(false)
+        .valign(gtk::Align::Center)
+        .build();
     button.set_widget_name("idle_inhibitor");
     button.add_css_class("module");
     button.add_css_class("idle-inhibitor");

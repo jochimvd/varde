@@ -28,7 +28,7 @@ window.bar {
 }
 
 window.bar label {
-    padding-top: 3px;
+    padding-top: 1px;
 }
 
 /* Development alignment guides. Inset shadows do not affect widget sizing. */
@@ -69,7 +69,7 @@ button {
 }
 
 .workspaces button {
-    margin: 4px 1px;
+    margin: 4px 0;
     padding: 0 5px;
     border-radius: 5px;
     color: @tertiary_color;
@@ -94,21 +94,14 @@ button {
 }
 
 .window {
-    margin: 0 10px 0 15px;
+    padding-right: 5px;
+    padding-left: 5px;
 }
 
 .clock {
     padding-right: 5px;
     padding-left: 5px;
     font-weight: bold;
-}
-
-.clock.date {
-    margin-right: 3px;
-}
-
-.clock.time {
-    margin-left: 3px;
 }
 
 .module,

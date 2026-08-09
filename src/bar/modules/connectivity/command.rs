@@ -29,7 +29,10 @@ impl Refresh {
 }
 
 pub(super) fn module(name: &str) -> (gtk::Button, gtk::Label) {
-    let button = gtk::Button::builder().focusable(false).build();
+    let button = gtk::Button::builder()
+        .focusable(false)
+        .valign(gtk::Align::Center)
+        .build();
     button.add_css_class("module");
     button.add_css_class(name);
 

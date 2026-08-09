@@ -8,10 +8,48 @@ mod modules;
 use modules::{connectivity, hyprland, services, system, tray};
 
 const HEIGHT: i32 = 32;
-const MODULE_GAP: i32 = 10;
 const TRAY_REVEAL_GAP: i32 = 10;
-const TRAY_RETRACT_DELAY: Duration = Duration::from_secs(1);
+pub(super) const HOVER_DELAY: Duration = Duration::from_millis(200);
+pub(super) const RETRACT_DELAY: Duration = Duration::from_secs(1);
 const BAR_NAME: &str = "varde-bar";
+
+#[derive(Clone, Default)]
+pub(super) struct HoverIntent {
+    hovered: Rc<Cell<bool>>,
+    generation: Rc<Cell<u64>>,
+}
+
+impl HoverIntent {
+    pub(super) fn enter(&self, action: impl FnOnce() + 'static) {
+        self.hovered.set(true);
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
+        let state = self.clone();
+        gtk::glib::timeout_add_local_once(HOVER_DELAY, move || {
+            if state.hovered.get() && state.generation.get() == generation {
+                action();
+            }
+        });
+    }
+
+    pub(super) fn leave(&self) {
+        self.hovered.set(false);
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
+
+    pub(super) fn is_hovered(&self) -> bool {
+        self.hovered.get()
+    }
+
+    pub(super) fn retract(&self, action: impl FnOnce() + 'static) {
+        let state = self.clone();
+        gtk::glib::timeout_add_local_once(RETRACT_DELAY, move || {
+            if !state.hovered.get() {
+                action();
+            }
+        });
+    }
+}
 
 pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notifications::Manager>) {
     if app
@@ -43,7 +81,6 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     let center = region("center", gtk::Align::Center);
     let right = region("right", gtk::Align::End);
     left.set_hexpand(true);
-    right.set_spacing(MODULE_GAP);
     notifications.set_center_anchor(&window);
 
     left.append(&hyprland::widget());
@@ -71,15 +108,15 @@ fn tray_group(idle: &gtk::Button) -> gtk::Overlay {
         .transition_type(gtk::RevealerTransitionType::SlideLeft)
         .halign(gtk::Align::End)
         .build();
-    let hovered = Rc::new(Cell::new(false));
+    let hover_intent = HoverIntent::default();
     let menu_open = Rc::new(Cell::new(false));
     let tray = tray::widget({
         let revealer = revealer.clone();
-        let hovered = hovered.clone();
+        let hover_intent = hover_intent.clone();
         let menu_open = menu_open.clone();
         move |open| {
             menu_open.set(open);
-            update_tray_reveal(&revealer, &hovered, &menu_open);
+            update_tray_reveal(&revealer, &hover_intent, &menu_open);
         }
     });
     revealer.set_child(Some(&tray));
@@ -96,6 +133,7 @@ fn tray_group(idle: &gtk::Button) -> gtk::Overlay {
         }
     });
     let group = gtk::Overlay::new();
+    group.set_valign(gtk::Align::Center);
     group.set_child(Some(idle));
     group.add_overlay(&revealer);
     group.set_clip_overlay(&revealer, false);
@@ -103,20 +141,24 @@ fn tray_group(idle: &gtk::Button) -> gtk::Overlay {
     let hover = gtk::EventControllerMotion::new();
     hover.connect_enter({
         let revealer = revealer.clone();
-        let hovered = hovered.clone();
+        let hover_intent = hover_intent.clone();
         let menu_open = menu_open.clone();
         move |_, _, _| {
-            hovered.set(true);
-            update_tray_reveal(&revealer, &hovered, &menu_open);
+            let revealer = revealer.clone();
+            let reveal_intent = hover_intent.clone();
+            let menu_open = menu_open.clone();
+            hover_intent.enter(move || {
+                update_tray_reveal(&revealer, &reveal_intent, &menu_open);
+            });
         }
     });
     hover.connect_leave({
         let revealer = revealer.clone();
-        let hovered = hovered.clone();
+        let hover_intent = hover_intent.clone();
         let menu_open = menu_open.clone();
         move |_| {
-            hovered.set(false);
-            update_tray_reveal(&revealer, &hovered, &menu_open);
+            hover_intent.leave();
+            update_tray_reveal(&revealer, &hover_intent, &menu_open);
         }
     });
     group.add_controller(hover);
@@ -125,18 +167,17 @@ fn tray_group(idle: &gtk::Button) -> gtk::Overlay {
 
 fn update_tray_reveal(
     revealer: &gtk::Revealer,
-    hovered: &Rc<Cell<bool>>,
+    hover_intent: &HoverIntent,
     menu_open: &Rc<Cell<bool>>,
 ) {
-    if hovered.get() || menu_open.get() {
+    if hover_intent.is_hovered() || menu_open.get() {
         revealer.set_reveal_child(true);
         return;
     }
     let revealer = revealer.clone();
-    let hovered = hovered.clone();
     let menu_open = menu_open.clone();
-    gtk::glib::timeout_add_local_once(TRAY_RETRACT_DELAY, move || {
-        if !hovered.get() && !menu_open.get() {
+    hover_intent.retract(move || {
+        if !menu_open.get() {
             revealer.set_reveal_child(false);
         }
     });

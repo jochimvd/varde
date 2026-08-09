@@ -17,7 +17,10 @@ pub(in crate::notifications) struct Bell {
 
 impl Bell {
     pub fn new(manager: &Rc<Manager>, app: &gtk::Application) -> Self {
-        let button = gtk::Button::builder().focusable(false).build();
+        let button = gtk::Button::builder()
+            .focusable(false)
+            .valign(gtk::Align::Center)
+            .build();
         button.add_css_class("module");
         button.add_css_class("notification");
 
