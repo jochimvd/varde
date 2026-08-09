@@ -8,6 +8,7 @@ mod modules;
 use modules::{connectivity, hyprland, services, system, tray};
 
 const HEIGHT: i32 = 32;
+const MODULE_GAP: i32 = 5;
 const TRAY_REVEAL_GAP: i32 = 10;
 pub(super) const HOVER_DELAY: Duration = Duration::from_millis(200);
 pub(super) const RETRACT_DELAY: Duration = Duration::from_secs(1);
@@ -81,6 +82,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     let center = region("center", gtk::Align::Center);
     let right = region("right", gtk::Align::End);
     left.set_hexpand(true);
+    right.set_spacing(MODULE_GAP);
     notifications.set_center_anchor(&window);
 
     left.append(&hyprland::widget());
