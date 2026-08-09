@@ -173,7 +173,7 @@ popover.tray-menu separator {
     background: alpha(@accent_color, 0.14);
     margin-left: 0;
     transform: scale(1);
-    transform-origin: calc(100% - 1px) 50%;
+    transform-origin: 100% 50%;
     transition: margin-left 300ms ease-in-out,
                 transform 300ms ease-in-out,
                 background-color 300ms ease-in-out,
