@@ -8,7 +8,8 @@ mod modules;
 use modules::{connectivity, hyprland, services, system, tray};
 
 const HEIGHT: i32 = 32;
-const MODULE_GAP: i32 = 5;
+const MODULE_GAP: i32 = 10;
+const CENTER_GAP: i32 = 5;
 const TRAY_REVEAL_GAP: i32 = 10;
 pub(super) const HOVER_DELAY: Duration = Duration::from_millis(200);
 pub(super) const RETRACT_DELAY: Duration = Duration::from_secs(1);
