@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use async_channel::Sender;
 use gio::prelude::*;
-use gtk::{gdk, gdk::prelude::*};
 
 use super::clipboard;
 
@@ -176,11 +175,16 @@ impl Source for Apps {
 }
 
 fn launch_app(id: &str) -> Result<Outcome, String> {
-    let app = gio::DesktopAppInfo::new(id)
+    gio::DesktopAppInfo::new(id)
         .ok_or_else(|| format!("Application is no longer available: {id}"))?;
-    let context = gdk::Display::default().map(|display| display.app_launch_context());
-    app.launch(&[] as &[gio::File], context.as_ref())
+    let arguments = ["uwsm-app", "--", id].map(std::ffi::OsStr::new);
+    let process = gio::Subprocess::newv(&arguments, gio::SubprocessFlags::NONE)
         .map_err(|error| error.to_string())?;
+    process.wait_check_async(None::<&gio::Cancellable>, |result| {
+        if let Err(error) = result {
+            eprintln!("varde: application launch failed: {error}");
+        }
+    });
     Ok(Outcome::Done)
 }
 
