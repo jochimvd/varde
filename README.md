@@ -40,9 +40,9 @@ center.
 
 Varde targets its author's current Arch Linux system. The setup uses GTK 4,
 gtk4-layer-shell, Hyprland, PipeWire, WirePlumber, iwd, BlueZ, iproute2,
-PulseAudio utilities, coreutils, `jq`, `grim`, and JetBrains Mono Nerd Font.
-Clipboard history additionally needs `cliphist`, `wl-copy`, and a running
-`wl-paste --watch cliphist store` process.
+PulseAudio utilities, coreutils, `uwsm-app`, `jq`, `grim`, and JetBrains Mono
+Nerd Font. Clipboard history additionally needs `cliphist`, `wl-copy`, and a
+running `wl-paste --watch cliphist store` process.
 
 Bar actions call `hyprctl`, `wpctl`, `pactl`, `ip`, `iwctl`, `bluetoothctl`,
 `pw-dump`, `dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
