@@ -15,6 +15,12 @@ pub(super) enum Urgency {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct Action {
+    pub key: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct Notification {
     pub id: u32,
     pub revision: u64,
@@ -25,7 +31,7 @@ pub(super) struct Notification {
     pub progress: Option<u8>,
     pub summary: String,
     pub body: String,
-    pub has_default_action: bool,
+    pub actions: Vec<Action>,
     pub urgency: Urgency,
     pub desktop_entry: String,
     pub resident: bool,
@@ -40,7 +46,7 @@ pub(super) struct Incoming {
     pub progress: Option<u8>,
     pub summary: String,
     pub body: String,
-    pub has_default_action: bool,
+    pub actions: Vec<Action>,
     pub urgency: Urgency,
     pub desktop_entry: String,
     pub tag: String,
@@ -105,7 +111,7 @@ impl Store {
                 progress: incoming.progress,
                 summary: incoming.summary,
                 body: incoming.body,
-                has_default_action: incoming.has_default_action,
+                actions: incoming.actions,
                 urgency: incoming.urgency,
                 desktop_entry: incoming.desktop_entry,
                 resident: incoming.resident,
@@ -208,10 +214,10 @@ impl Store {
         self.active.iter().map(|active| &active.notification)
     }
 
-    pub fn has_default_action(&self, id: u32) -> bool {
-        self.active()
-            .chain(self.history())
-            .any(|notification| notification.id == id && notification.has_default_action)
+    pub fn has_action(&self, id: u32, key: &str) -> bool {
+        self.active().chain(self.history()).any(|notification| {
+            notification.id == id && notification.actions.iter().any(|action| action.key == key)
+        })
     }
 
     pub fn is_active(&self, id: u32) -> bool {
@@ -618,19 +624,23 @@ mod tests {
     }
 
     #[test]
-    fn finds_default_actions_only_on_the_target_notification() {
+    fn finds_actions_only_on_the_target_notification() {
         let mut store = Store::default();
         let id = store.notify(Incoming {
-            has_default_action: true,
+            actions: vec![Action {
+                key: "reply".into(),
+                label: "Reply".into(),
+            }],
             ..Incoming::default()
         });
         let other = store.notify(Incoming::default());
 
-        assert!(store.has_default_action(id));
-        assert!(!store.has_default_action(other));
+        assert!(store.has_action(id, "reply"));
+        assert!(!store.has_action(id, "default"));
+        assert!(!store.has_action(other, "reply"));
 
         store.close(id, true);
-        assert!(store.has_default_action(id));
+        assert!(store.has_action(id, "reply"));
         assert!(!store.is_active(id));
     }
 }

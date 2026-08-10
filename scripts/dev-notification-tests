@@ -81,6 +81,22 @@ notify \
     "['default', 'Open']" \
     "{'resident': <true>, 'urgency': <byte 1>}" 0
 
+next 'Send expandable notification with long text and named actions'
+notify \
+    'Protocol Tests' 0 'mail-unread' \
+    '[EXPANDABLE ACTIONS] This deliberately long notification title should stay on one line until the chevron is pressed' \
+    'The collapsed body is limited to three lines. Expanding the notification should reveal this complete message, wrap the full title, and show Reply, Mark read, and Mute as compact buttons along the bottom. The default action should remain attached to the notification surface.' \
+    "['default', 'Open', 'reply', 'Reply', 'mark-read', 'Mark read', 'mute', 'Mute']" \
+    "{'resident': <true>, 'urgency': <byte 1>}" 0
+
+next 'Send short notification with only a named action'
+notify \
+    'Protocol Tests' 0 'mail-unread' \
+    '[NAMED ACTION] Expansion reveals the action' \
+    'This row has no default action.' \
+    "['archive', 'Archive']" \
+    "{'resident': <false>, 'urgency': <byte 1>}" 0
+
 next 'Send non-resident notification with a default action'
 notify \
     'Protocol Tests' 0 'utilities-terminal' \

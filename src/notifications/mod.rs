@@ -122,9 +122,9 @@ impl Manager {
         }
     }
 
-    pub(super) fn invoke_default(&self, id: u32) {
+    pub(super) fn invoke_action(&self, id: u32, key: &str) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
-            daemon.invoke_default(id);
+            daemon.invoke_action(id, key.to_string());
         }
     }
 
