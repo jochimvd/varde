@@ -298,7 +298,7 @@ impl Notifications {
         body: &str,
         actions: Vec<String>,
         hints: HashMap<String, OwnedValue>,
-        expire_timeout: i32,
+        _expire_timeout: i32,
     ) -> u32 {
         let sound = sound_hint(&hints);
         let incoming = Incoming {
@@ -320,7 +320,6 @@ impl Notifications {
                 .unwrap_or_default(),
             transient: bool_hint(&hints, "transient"),
             resident: bool_hint(&hints, "resident"),
-            popup_timeout_ms: expire_timeout,
         };
         let mut store = self.0.store.lock().expect("notification store poisoned");
         let play_sound = !store.dnd();
@@ -610,13 +609,12 @@ mod tests {
                 key: "archive".into(),
                 label: "Archive".into(),
             }],
-            popup_timeout_ms: 25,
             ..Incoming::default()
         });
         assert!(store.displayed(id, 1, now));
         assert!(
             store
-                .hide_due_popups(now + std::time::Duration::from_millis(25))
+                .hide_due_popups(now + std::time::Duration::from_secs(5))
                 .is_empty()
         );
 
