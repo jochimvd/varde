@@ -68,6 +68,7 @@ fn rebuild(
             .focusable(false)
             .valign(gtk::Align::Center)
             .build();
+        target.set_cursor_from_name(Some("pointer"));
         target.add_css_class("tray-icon");
         target.set_tooltip_text(item.tooltip.as_deref());
         target.append(&icon(item));
