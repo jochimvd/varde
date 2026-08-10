@@ -95,7 +95,7 @@ if [[ -n $renderer ]]; then
     renderer_env=" GSK_RENDERER=$renderer"
 fi
 debug_layout_env=
-if [[ -n ${VARDE_DEBUG_LAYOUT:-} ]]; then
+if [[ ${VARDE_DEBUG_LAYOUT:-} == 1 ]]; then
     debug_layout_env=" VARDE_DEBUG_LAYOUT=1"
 fi
 application_id="org.varde.desktop.Development.${session//-/_}"

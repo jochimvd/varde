@@ -72,7 +72,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
         .build();
     window.add_css_class("bar");
     #[cfg(debug_assertions)]
-    if std::env::var_os("VARDE_DEBUG_LAYOUT").is_some() {
+    if std::env::var("VARDE_DEBUG_LAYOUT").as_deref() == Ok("1") {
         window.add_css_class("development");
     }
 
