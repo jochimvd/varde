@@ -187,10 +187,11 @@ impl Center {
         for group in groups {
             let mut view = available
                 .iter()
-                .position(|view| *view.key.borrow() == group.key)
+                .position(|view| view.key == group.key)
                 .map(|index| available.remove(index))
                 .unwrap_or_else(|| {
                     let view = GroupView::new(
+                        group.key.clone(),
                         &self.collapsed,
                         &self.popover,
                         &self.manager,
@@ -310,7 +311,7 @@ struct GroupView {
     rows: gtk::Box,
     revealer: gtk::Revealer,
     row_views: Vec<RowView>,
-    key: Rc<RefCell<String>>,
+    key: String,
     notifications: Rc<RefCell<Vec<(u32, bool)>>>,
     collapsed: Rc<RefCell<HashSet<String>>>,
     manager: std::rc::Weak<Manager>,
@@ -320,6 +321,7 @@ struct GroupView {
 
 impl GroupView {
     fn new(
+        key: String,
         collapsed: &Rc<RefCell<HashSet<String>>>,
         popover: &gtk::Popover,
         manager: &std::rc::Weak<Manager>,
@@ -372,40 +374,21 @@ impl GroupView {
             .child(&rows)
             .build();
 
-        let key = Rc::new(RefCell::new(String::new()));
         let notifications = Rc::new(RefCell::new(Vec::new()));
-        let pressed_key = Rc::new(RefCell::new(None));
-        disclosure.connect_state_flags_changed({
-            let key = Rc::clone(&key);
-            let pressed_key = Rc::clone(&pressed_key);
-            move |_, flags| {
-                if flags.contains(gtk::StateFlags::ACTIVE) {
-                    pressed_key.replace(Some(key.borrow().clone()));
-                }
-            }
-        });
         disclosure.connect_clicked({
             let collapsed = Rc::clone(collapsed);
-            let key = Rc::clone(&key);
-            let pressed_key = Rc::clone(&pressed_key);
+            let key = key.clone();
             let revealer = revealer.clone();
             let disclosure = disclosure.clone();
             let popover = popover.clone();
             move |_| {
-                let pressed = pressed_key
-                    .borrow_mut()
-                    .take()
-                    .unwrap_or_else(|| key.borrow().clone());
-                if pressed != *key.borrow() {
-                    return;
-                }
                 let reveal = !revealer.reveals_child();
                 revealer.set_reveal_child(reveal);
                 disclosure.set_label(if reveal { "▾" } else { "▸" });
                 if reveal {
-                    collapsed.borrow_mut().remove(&pressed);
+                    collapsed.borrow_mut().remove(&key);
                 } else {
-                    collapsed.borrow_mut().insert(pressed);
+                    collapsed.borrow_mut().insert(key.clone());
                 }
                 resize_during_reveal(&popover, &revealer);
             }
@@ -447,6 +430,7 @@ impl GroupView {
     }
 
     fn update(&mut self, group: &Group) {
+        debug_assert_eq!(self.key, group.key);
         let (name, icon) = application(group);
         self.image.clear();
         if let Some(icon) = icon {
@@ -457,7 +441,6 @@ impl GroupView {
         }
         self.name.set_label(&name);
         self.count.set_label(&group.notifications.len().to_string());
-        self.key.replace(group.key.clone());
         self.notifications.replace(
             group
                 .notifications
@@ -518,9 +501,8 @@ struct RowView {
     actions_revealer: gtk::Revealer,
     target: Rc<Cell<(u32, bool)>>,
     has_default: Rc<Cell<bool>>,
-    identity: Rc<Cell<NotificationIdentity>>,
+    identity: Cell<NotificationIdentity>,
     expanded: Rc<Cell<bool>>,
-    expandable: Rc<Cell<bool>>,
     manager: std::rc::Weak<Manager>,
     popover: gtk::Popover,
     interactive: bool,
@@ -628,9 +610,8 @@ impl RowView {
         let has_default = Rc::new(Cell::new(false));
         highlight_on_hover(&content, &surface, &has_default);
         highlight_on_hover(&actions_revealer, &surface, &has_default);
-        let identity = Rc::new(Cell::new((0, 0)));
+        let identity = Cell::new((0, 0));
         let expanded = Rc::new(Cell::new(false));
-        let expandable = Rc::new(Cell::new(false));
         expand.connect_clicked({
             let summary = summary.clone();
             let body = body.clone();
@@ -693,7 +674,6 @@ impl RowView {
             has_default,
             identity,
             expanded,
-            expandable,
             manager: manager.clone(),
             popover: popover.clone(),
             interactive,
@@ -717,7 +697,6 @@ impl RowView {
         }
 
         self.expanded.set(false);
-        self.expandable.set(false);
         if notification.urgency.as_deref() == Some("critical") {
             self.container.add_css_class("critical");
         } else {
@@ -773,41 +752,35 @@ impl RowView {
             self.actions.append(&button);
         }
 
-        self.expandable.set(has_named_actions);
         self.expand.set_visible(has_named_actions);
         self.expand_space.set_visible(has_named_actions);
         let body = self.body.clone();
         let expand = self.expand.clone();
         let expand_space = self.expand_space.clone();
-        let expandable = Rc::clone(&self.expandable);
         let expanded = Rc::clone(&self.expanded);
         let expand_icon = self.expand_icon.clone();
         let actions_revealer = self.actions_revealer.clone();
         let popover = self.popover.clone();
-        let current_identity = Rc::clone(&self.identity);
         let layout_ready = Cell::new(false);
         self.summary.add_tick_callback(move |summary, _| {
             if !layout_ready.replace(true) {
                 return glib::ControlFlow::Continue;
             }
-            if current_identity.get() == identity {
-                let value = has_named_actions
-                    || summary.layout().is_ellipsized()
-                    || (body.is_visible() && body.layout().is_ellipsized());
-                expandable.set(value);
-                expand.set_visible(value);
-                expand_space.set_visible(value);
-                let restored = value && expanded.get();
-                actions_revealer.set_transition_duration(0);
-                set_row_expanded(summary, &body, &expand_icon, &actions_revealer, restored);
-                actions_revealer.set_transition_duration(GROUP_TRANSITION_DURATION);
-                popover.queue_resize();
-                popover.present();
-            }
+            let value = has_named_actions
+                || summary.layout().is_ellipsized()
+                || (body.is_visible() && body.layout().is_ellipsized());
+            expand.set_visible(value);
+            expand_space.set_visible(value);
+            let restored = value && expanded.get();
+            actions_revealer.set_transition_duration(0);
+            set_row_expanded(summary, &body, &expand_icon, &actions_revealer, restored);
+            actions_revealer.set_transition_duration(GROUP_TRANSITION_DURATION);
+            popover.queue_resize();
+            popover.present();
             glib::ControlFlow::Break
         });
 
-        let expanded = self.expandable.get() && self.expanded.get();
+        let expanded = self.expand.is_visible() && self.expanded.get();
         set_row_expanded(
             &self.summary,
             &self.body,
