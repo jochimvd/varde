@@ -68,6 +68,7 @@ pub(super) struct Notification {
     desktop_entry: Option<String>,
     pub summary: String,
     pub body: String,
+    pub actions: Vec<state::Action>,
     pub urgency: Option<String>,
 }
 
@@ -95,6 +96,7 @@ fn from_state_notification(notification: &state::Notification, active: bool) -> 
             .then(|| notification.desktop_entry.clone()),
         summary: notification.summary.clone(),
         body: notification.body.clone(),
+        actions: notification.actions.clone(),
         urgency: Some(
             match notification.urgency {
                 state::Urgency::Low => "low",
@@ -193,6 +195,7 @@ fn notification(
         desktop_entry: desktop_entry.map(str::to_string),
         summary: String::new(),
         body: String::new(),
+        actions: Vec::new(),
         urgency: None,
     }
 }
@@ -255,6 +258,26 @@ mod tests {
         assert_eq!(
             Snapshot::unavailable().tooltip(),
             "Notifications unavailable"
+        );
+    }
+
+    #[test]
+    fn carries_actions_into_the_snapshot() {
+        let mut store = state::Store::default();
+        store.notify(state::Incoming {
+            actions: vec![state::Action {
+                key: "reply".into(),
+                label: "Reply".into(),
+            }],
+            ..state::Incoming::default()
+        });
+
+        assert_eq!(
+            from_state(&store).groups[0].notifications[0].actions,
+            vec![state::Action {
+                key: "reply".into(),
+                label: "Reply".into(),
+            }]
         );
     }
 }

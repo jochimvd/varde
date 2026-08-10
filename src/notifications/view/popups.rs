@@ -240,6 +240,13 @@ fn popup_widget(
     card_content.append(&content);
 
     let card = gtk::Button::builder().child(&card_content).build();
+    if notification
+        .actions
+        .iter()
+        .any(|action| action.key == "default")
+    {
+        card.set_cursor_from_name(Some("pointer"));
+    }
     card.add_css_class("notification-popup");
     if notification.urgency.as_deref() == Some("critical") {
         card.add_css_class("critical");
@@ -249,7 +256,7 @@ fn popup_widget(
         let id = notification.id;
         move |_| {
             if let Some(manager) = manager.upgrade() {
-                manager.invoke_default(id);
+                manager.invoke_action(id, "default");
             }
         }
     });

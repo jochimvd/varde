@@ -9,7 +9,7 @@ use zbus::{interface, zvariant::OwnedValue};
 use super::{
     image::{self, Thumbnail},
     model::{self, Snapshot},
-    state::{CloseReason, Incoming, Store, Urgency},
+    state::{Action, CloseReason, Incoming, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -17,6 +17,9 @@ const PATH: &str = "/org/freedesktop/Notifications";
 const INTERFACE: &str = "org.freedesktop.Notifications";
 const MAX_TEXT_BYTES: usize = 4 * 1024;
 const MAX_BODY_BYTES: usize = 64 * 1024;
+const MAX_ACTIONS: usize = 16;
+const MAX_ACTION_KEY_BYTES: usize = 256;
+const MAX_ACTION_LABEL_BYTES: usize = 1024;
 
 #[derive(Clone)]
 pub(super) struct Control {
@@ -50,8 +53,8 @@ impl Control {
         let _ = self.commands.send(Command::DismissGroup(notifications));
     }
 
-    pub fn invoke_default(&self, id: u32) {
-        let _ = self.commands.send(Command::InvokeDefault(id));
+    pub fn invoke_action(&self, id: u32, key: String) {
+        let _ = self.commands.send(Command::InvokeAction(id, key));
     }
 
     pub fn displayed(&self, notifications: Vec<(u32, u64)>) {
@@ -66,7 +69,7 @@ enum Command {
     Clear,
     Dismiss(u32),
     DismissGroup(Vec<(u32, bool)>),
-    InvokeDefault(u32),
+    InvokeAction(u32, String),
     Displayed(Vec<(u32, u64)>),
     RemoveHistory(u32),
 }
@@ -191,12 +194,12 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                 drop(store);
                 emit_closed(&connection, &closed);
             }
-            Command::InvokeDefault(id) => {
+            Command::InvokeAction(id, key) => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
-                let (action_invoked, active_closed) = invoke_default(&mut store, id);
+                let (action_invoked, active_closed) = invoke_action(&mut store, id, &key);
                 drop(store);
                 if action_invoked {
-                    emit_action(&connection, id, "default");
+                    emit_action(&connection, id, &key);
                 }
                 if active_closed {
                     emit_closed(&connection, &[(id, CloseReason::Dismissed)]);
@@ -223,18 +226,20 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
     Ok(())
 }
 
-fn invoke_default(store: &mut Store, id: u32) -> (bool, bool) {
-    let actionable = store.has_default_action(id);
+fn invoke_action(store: &mut Store, id: u32, key: &str) -> (bool, bool) {
+    if !store.has_action(id, key) {
+        return (false, false);
+    }
     let active = store.is_active(id);
     if store.is_resident(id) {
-        return (actionable, false);
+        return (true, false);
     }
     let removed = if active {
         store.close(id, false)
     } else {
         store.remove_history(id)
     };
-    (actionable && removed, active && removed)
+    (removed, active && removed)
 }
 
 fn emit_closed(connection: &zbus::blocking::Connection, closed: &[(u32, CloseReason)]) {
@@ -265,7 +270,6 @@ struct Notifications(Shared);
 impl Notifications {
     #[zbus(name = "GetCapabilities")]
     fn get_capabilities(&self) -> Vec<&str> {
-        // TODO: Render and invoke named notification actions.
         vec![
             "actions",
             "body",
@@ -297,7 +301,7 @@ impl Notifications {
             progress: progress_hint(&hints),
             summary: truncate_utf8(summary, MAX_TEXT_BYTES),
             body: truncate_utf8(body, MAX_BODY_BYTES),
-            has_default_action: actions.chunks_exact(2).any(|pair| pair[0] == "default"),
+            actions: notification_actions(&actions),
             urgency: urgency(&hints),
             desktop_entry: string_hint(&hints, "desktop-entry")
                 .map(|value| truncate_utf8(&value, MAX_TEXT_BYTES))
@@ -374,6 +378,17 @@ impl Notifications {
         id: u32,
         action: &str,
     ) -> zbus::Result<()>;
+}
+
+fn notification_actions(values: &[String]) -> Vec<Action> {
+    values
+        .chunks_exact(2)
+        .take(MAX_ACTIONS)
+        .map(|pair| Action {
+            key: truncate_utf8(&pair[0], MAX_ACTION_KEY_BYTES),
+            label: truncate_utf8(&pair[1], MAX_ACTION_LABEL_BYTES),
+        })
+        .collect()
 }
 
 fn urgency(hints: &HashMap<String, OwnedValue>) -> Urgency {
@@ -485,12 +500,15 @@ mod tests {
     fn resident_actions_do_not_consume_notifications() {
         let mut store = Store::default();
         let id = store.notify(Incoming {
-            has_default_action: true,
+            actions: vec![Action {
+                key: "reply".into(),
+                label: "Reply".into(),
+            }],
             resident: true,
             ..Incoming::default()
         });
 
-        assert_eq!(invoke_default(&mut store, id), (true, false));
+        assert_eq!(invoke_action(&mut store, id, "reply"), (true, false));
         assert!(store.is_active(id));
         assert!(store.close(id, false));
     }
@@ -499,12 +517,86 @@ mod tests {
     fn nonresident_actions_consume_notifications() {
         let mut store = Store::default();
         let id = store.notify(Incoming {
-            has_default_action: true,
+            actions: vec![Action {
+                key: "default".into(),
+                label: "Open".into(),
+            }],
             ..Incoming::default()
         });
 
-        assert_eq!(invoke_default(&mut store, id), (true, true));
+        assert_eq!(invoke_action(&mut store, id, "default"), (true, true));
         assert!(!store.is_active(id));
+    }
+
+    #[test]
+    fn unknown_actions_do_not_consume_notifications() {
+        let mut store = Store::default();
+        let id = store.notify(Incoming::default());
+
+        assert_eq!(invoke_action(&mut store, id, "default"), (false, false));
+        assert!(store.is_active(id));
+    }
+
+    #[test]
+    fn history_actions_remove_only_the_history_entry() {
+        let mut store = Store::default();
+        let id = store.notify(Incoming {
+            actions: vec![Action {
+                key: "archive".into(),
+                label: "Archive".into(),
+            }],
+            ..Incoming::default()
+        });
+        assert!(store.close(id, true));
+
+        assert_eq!(invoke_action(&mut store, id, "archive"), (true, false));
+        assert!(!store.has_action(id, "archive"));
+    }
+
+    #[test]
+    fn parses_action_pairs_in_order_and_ignores_a_trailing_value() {
+        let values = ["default", "Open", "reply", "Reply", "mute", "", "odd"].map(String::from);
+
+        assert_eq!(
+            notification_actions(&values),
+            vec![
+                Action {
+                    key: "default".into(),
+                    label: "Open".into(),
+                },
+                Action {
+                    key: "reply".into(),
+                    label: "Reply".into(),
+                },
+                Action {
+                    key: "mute".into(),
+                    label: "".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn bounds_action_count_and_text() {
+        let mut values = Vec::new();
+        for index in 0..MAX_ACTIONS + 2 {
+            values.push(if index == 0 {
+                "k".repeat(MAX_ACTION_KEY_BYTES + 1)
+            } else {
+                format!("key-{index}")
+            });
+            values.push("l".repeat(MAX_ACTION_LABEL_BYTES + 1));
+        }
+
+        let actions = notification_actions(&values);
+
+        assert_eq!(actions.len(), MAX_ACTIONS);
+        assert_eq!(actions[0].key.len(), MAX_ACTION_KEY_BYTES);
+        assert_eq!(actions[0].label.len(), MAX_ACTION_LABEL_BYTES);
+        assert_eq!(
+            actions.last().unwrap().key,
+            format!("key-{}", MAX_ACTIONS - 1)
+        );
     }
 
     #[test]
