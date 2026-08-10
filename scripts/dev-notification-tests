@@ -60,7 +60,7 @@ close_notification() {
 
     printf '\nmethod:          CloseNotification\n'
     printf 'notification_id: %s\n' "$id"
-    printf 'expected:        removed from active notifications and history\n'
+    printf 'expected:        removed from the notification center\n'
     gdbus call \
         --address "$bus_address" \
         --dest "$service" \
@@ -109,14 +109,14 @@ next 'Send critical notification using the server default timeout'
 notify \
     'Protocol Tests' 0 'dialog-error' \
     '[CRITICAL DEFAULT] Persistent until dismissed' \
-    'urgency=critical and timeout=-1. The server default should keep this notification active.' \
+    'urgency=critical and timeout=-1. The popup and notification should remain until explicitly removed.' \
     '[]' "{'urgency': <byte 2>}" -1
 
 next 'Send normal notification with an explicit zero timeout'
 notify \
     'Protocol Tests' 0 'emblem-default' \
     '[ZERO TIMEOUT] Explicitly persistent' \
-    'urgency=normal and timeout=0. This should remain active until explicitly removed.' \
+    'urgency=normal and timeout=0. The popup and notification should remain until explicitly removed.' \
     '[]' "{'urgency': <byte 1>}" 0
 
 next 'Send notification with an application icon and raw image-data hint'
@@ -125,6 +125,34 @@ notify \
     '[IMAGE HINT] Picture plus application icon' \
     'image-data supplies the large picture while app_icon supplies the Teams application icon.' \
     '[]' "{'image-data': <(2, 2, 8, true, 8, 4, [byte 255, 64, 64, 255, 64, 255, 64, 255, 64, 64, 255, 255, 255, 220, 64, 255])>, 'urgency': <byte 1>}" 0
+
+next 'Send notification with a themed image-path icon'
+notify \
+    'Protocol Tests' 0 'dialog-information' \
+    '[THEMED IMAGE] Icon theme name in image-path' \
+    'image-path=folder-download should resolve through the current GTK icon theme.' \
+    '[]' "{'image-path': <'folder-download'>, 'urgency': <byte 1>}" 0
+
+next 'Send notification with a themed sound'
+notify \
+    'Protocol Tests' 0 'audio-volume-high' \
+    '[THEMED SOUND] message-new-instant' \
+    'sound-name should play through canberra-gtk-play.' \
+    '[]' "{'sound-name': <'message-new-instant'>, 'urgency': <byte 1>}" 0
+
+next 'Send notification with a sound file'
+notify \
+    'Protocol Tests' 0 'audio-volume-high' \
+    '[FILE SOUND] dialog-information.oga' \
+    'sound-file should play the specified absolute file.' \
+    '[]' "{'sound-file': <'/usr/share/sounds/freedesktop/stereo/dialog-information.oga'>, 'urgency': <byte 1>}" 0
+
+next 'Send notification with a suppressed sound'
+notify \
+    'Protocol Tests' 0 'audio-volume-muted' \
+    '[SUPPRESSED SOUND] Must remain silent' \
+    'suppress-sound=true should override sound-name.' \
+    '[]' "{'sound-name': <'message-new-instant'>, 'suppress-sound': <true>, 'urgency': <byte 1>}" 0
 
 next 'Send a notification with progress at 25 percent'
 notify \
@@ -144,15 +172,22 @@ notify \
 next 'Send transient notification with a short timeout'
 notify \
     'Protocol Tests' 0 'document-new' \
-    '[TRANSIENT] Must not enter history after expiry' \
-    'transient=true and timeout=2500. It should expire naturally and disappear completely.' \
+    '[TRANSIENT] Must not remain in the notification center' \
+    'transient=true and timeout=2500. Its popup should close and the notification should disappear completely.' \
     '[]' "{'transient': <true>, 'urgency': <byte 1>}" 2500
+
+next 'Send actionable notification with a short popup timeout'
+notify \
+    'Protocol Tests' 0 'mail-unread' \
+    '[CENTER RETENTION] Popup hides; action remains live' \
+    'timeout=2500 should only hide the popup. Afterward, open the notification center, expand this row, and invoke Archive.' \
+    "['archive', 'Archive']" "{'urgency': <byte 1>}" 2500
 
 next 'Send critical notification with an explicit timeout'
 notify \
     'Protocol Tests' 0 'battery-caution' \
-    '[CRITICAL EXPLICIT TIMEOUT] Expires after four seconds' \
-    'urgency=critical and timeout=4000. The sender-provided timeout should override critical persistence.' \
+    '[CRITICAL EXPLICIT TIMEOUT] Popup hides after four seconds' \
+    'urgency=critical and timeout=4000. The sender-provided timeout should hide the popup while retaining the notification in the center.' \
     '[]' "{'urgency': <byte 2>}" 4000
 
 next 'Send a persistent notification for sender recall testing'
