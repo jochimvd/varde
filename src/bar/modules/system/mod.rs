@@ -4,8 +4,6 @@ mod resources;
 
 use gtk::prelude::*;
 
-const MODULE_GAP: i32 = 10;
-
 pub struct SystemWidgets {
     pub center: gtk::Box,
     pub right: gtk::Box,
@@ -13,11 +11,12 @@ pub struct SystemWidgets {
 
 pub fn widgets() -> SystemWidgets {
     let center = module_box();
+    center.set_spacing(crate::bar::CENTER_GAP);
     center.append(&clock::date());
     center.append(&clock::time());
 
     let right = module_box();
-    right.set_spacing(MODULE_GAP);
+    right.set_spacing(crate::bar::MODULE_GAP);
     right.append(&resources::cpu());
     right.append(&resources::memory());
     if let Some(battery) = battery::widget() {

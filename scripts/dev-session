@@ -94,11 +94,15 @@ renderer_env=
 if [[ -n $renderer ]]; then
     renderer_env=" GSK_RENDERER=$renderer"
 fi
+debug_layout_env=
+if [[ ${VARDE_DEBUG_LAYOUT:-} == 1 ]]; then
+    debug_layout_env=" VARDE_DEBUG_LAYOUT=1"
+fi
 application_id="org.varde.desktop.Development.${session//-/_}"
 host_workspace="varde-dev-$session"
 work_dir="$VARDE_DEV_RUNTIME_DIR/work"
 rm -f -- "$launcher_pid_file"
-launch_command="env VARDE_NOTIFICATION_BUS_ADDRESS=$bus_address VARDE_DEV_APP_ID=$application_id VARDE_DEV_BINARY=$repo_dir/target/$profile/varde$renderer_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
+launch_command="env VARDE_NOTIFICATION_BUS_ADDRESS=$bus_address VARDE_DEV_APP_ID=$application_id VARDE_DEV_BINARY=$repo_dir/target/$profile/varde$renderer_env$debug_layout_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
 hyprctl -i "$host_instance" eval \
     "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
 float = true, size = { 1280, 720 }, center = true, \
