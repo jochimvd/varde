@@ -8,14 +8,10 @@ use super::{
 };
 use crate::background;
 
-const ICON_GAP: i32 = 2;
 const MENU_OFFSET: i32 = 12;
 
 pub fn widget(menu_visibility: impl Fn(bool) + 'static) -> gtk::Box {
-    let tray = gtk::Box::builder()
-        .spacing(ICON_GAP)
-        .valign(gtk::Align::Center)
-        .build();
+    let tray = gtk::Box::builder().valign(gtk::Align::Center).build();
     tray.set_widget_name("tray");
     tray.add_css_class("tray");
 
@@ -72,6 +68,7 @@ fn rebuild(
             .focusable(false)
             .valign(gtk::Align::Center)
             .build();
+        target.set_cursor_from_name(Some("pointer"));
         target.add_css_class("tray-icon");
         target.set_tooltip_text(item.tooltip.as_deref());
         target.append(&icon(item));

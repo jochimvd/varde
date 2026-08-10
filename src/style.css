@@ -28,10 +28,25 @@ window.bar {
 }
 
 window.bar label {
-    padding-top: 3px;
+    padding-top: 1px;
 }
 
 /* Development alignment guides. Inset shadows do not affect widget sizing. */
+.development .workspaces button { box-shadow: inset 0 0 0 1px #00E5FF; }
+.development .window { box-shadow: inset 0 0 0 1px #FF9800; }
+.development .clock.date { box-shadow: inset 0 0 0 1px #E040FB; }
+.development .clock.time { box-shadow: inset 0 0 0 1px #7C4DFF; }
+.development .idle-inhibitor { box-shadow: inset 0 0 0 1px #00BCD4; }
+.development .tray { box-shadow: inset 0 0 0 1px #2979FF; }
+.development .bluetooth { box-shadow: inset 0 0 0 1px #651FFF; }
+.development .network { box-shadow: inset 0 0 0 1px #00E676; }
+.development .audio { box-shadow: inset 0 0 0 1px #FF9100; }
+.development .cpu { box-shadow: inset 0 0 0 1px #FF1744; }
+.development .memory { box-shadow: inset 0 0 0 1px #FFEA00; }
+.development .battery { box-shadow: inset 0 0 0 1px #76FF03; }
+.development .notification { box-shadow: inset 0 0 0 1px #F50057; }
+.development .privacy { box-shadow: inset 0 0 0 1px #1DE9B6; }
+
 .notification-dot {
     min-width: 5px;
     min-height: 5px;
@@ -69,7 +84,7 @@ button {
 }
 
 .workspaces button {
-    margin: 4px 1px;
+    margin: 4px 0;
     padding: 0 5px;
     border-radius: 5px;
     color: @tertiary_color;
@@ -94,7 +109,8 @@ button {
 }
 
 .window {
-    margin: 0 10px 0 15px;
+    padding-right: 5px;
+    padding-left: 5px;
 }
 
 .clock {
@@ -103,12 +119,116 @@ button {
     font-weight: bold;
 }
 
-.clock.date {
-    margin-right: 3px;
+popover.bar-popover,
+popover.notifications {
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    font-size: 14px;
+    color: @primary_color;
+    background: transparent;
 }
 
-.clock.time {
-    margin-left: 3px;
+popover.bar-popover > contents,
+popover.notifications > contents {
+    padding: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+}
+
+.bar-popover-panel,
+.notification-center {
+    padding: 8px;
+    border: 1px solid @overlay_strong_color;
+    border-radius: 8px;
+    background: @surface_color;
+}
+
+.world-clock-title {
+    padding: 2px;
+    font-weight: bold;
+}
+
+.world-clock-grid {
+    padding: 2px;
+}
+
+.world-clock-name,
+.world-clock-day,
+.world-clock-offset {
+    color: @text_muted_color;
+}
+
+.world-clock-day.today {
+    color: @accent_color;
+}
+
+.world-clock-time {
+    font-weight: bold;
+}
+
+.world-clock-time.primary {
+    color: @accent_color;
+}
+
+popover.date-popover calendar {
+    border: none;
+    color: @primary_color;
+    background: transparent;
+}
+
+popover.date-popover calendar header {
+    border: none;
+    background: transparent;
+}
+
+popover.date-popover calendar button {
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 5px;
+    color: @text_secondary_color;
+}
+
+popover.date-popover calendar button:hover,
+popover.date-popover calendar .day-number:hover {
+    background: @overlay_subtle_color;
+}
+
+popover.date-popover calendar .day-name {
+    color: @text_muted_color;
+    font-weight: bold;
+}
+
+popover.date-popover calendar .other-month {
+    color: @tertiary_color;
+}
+
+popover.date-popover calendar .today {
+    color: @accent_color;
+    font-weight: bold;
+    box-shadow: none;
+}
+
+popover.date-popover calendar .day-number:selected {
+    border-radius: 5px;
+    color: @surface_color;
+    background: @accent_color;
+}
+
+popover.date-popover calendar .day-number:focus,
+popover.date-popover calendar .day-number:focus-visible {
+    outline-color: alpha(@accent_color, 0.65);
+}
+
+popover.date-popover calendar .day-number:selected:focus,
+popover.date-popover calendar .day-number:selected:focus-visible {
+    outline: none;
+}
+
+popover.bar-popover .calendar-stats {
+    margin-top: 4px;
+    padding: 8px 2px 2px;
+    border-top: 1px solid @overlay_strong_color;
+    color: @text_muted_color;
 }
 
 .module,
@@ -168,7 +288,40 @@ popover.tray-menu separator {
 }
 
 .privacy {
-    color: @accent_color;
+    color: @text_secondary_color;
+}
+
+.privacy-pill {
+    min-width: 10px;
+    min-height: 12px;
+    padding: 4px 5px;
+    border: 2px solid @accent_color;
+    border-radius: 8px;
+    background: alpha(@accent_color, 0.14);
+    margin-left: 0;
+    transform: scale(1);
+    transform-origin: 100% 50%;
+    transition: margin-left 300ms ease-in-out,
+                transform 300ms ease-in-out,
+                background-color 300ms ease-in-out,
+                border-radius 300ms ease-in-out;
+}
+
+.privacy.collapsed .privacy-pill {
+    border-radius: 999px;
+    background: @accent_color;
+    /* CSS transforms do not shrink GTK layout: 24px pill - 6px dot. */
+    margin-left: -18px;
+    transform: scale(0.25);
+}
+
+.privacy-icons {
+    transition: opacity 150ms ease-in-out 100ms;
+}
+
+.privacy.collapsed .privacy-icons {
+    opacity: 0;
+    transition-delay: 0ms;
 }
 
 tooltip {
@@ -267,20 +420,6 @@ window.launcher scrollbar {
     opacity: 0;
 }
 
-popover.notifications {
-    font-family: 'JetBrainsMono Nerd Font Propo';
-    font-size: 14px;
-    color: @primary_color;
-    background: transparent;
-}
-
-popover.notifications > contents {
-    padding: 0;
-    border: none;
-    box-shadow: none;
-    background: transparent;
-}
-
 window.notification-popups {
     font-family: 'JetBrainsMono Nerd Font Propo';
     font-size: 14px;
@@ -332,13 +471,6 @@ window.notification-popups {
     min-height: 4px;
     border-radius: 2px;
     background: @accent_color;
-}
-
-.notification-center {
-    padding: 8px;
-    border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
-    background: @surface_color;
 }
 
 .notification-center-header {

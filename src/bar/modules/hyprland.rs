@@ -18,7 +18,7 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub fn widget() -> gtk::Box {
     let root = gtk::Box::builder()
-        .spacing(0)
+        .spacing(crate::bar::MODULE_GAP)
         .hexpand(true)
         .valign(gtk::Align::Center)
         .build();
@@ -33,6 +33,8 @@ pub fn widget() -> gtk::Box {
     window.add_css_class("window");
     window.set_ellipsize(gtk::pango::EllipsizeMode::End);
     window.set_hexpand(true);
+    window.set_margin_end(crate::bar::MODULE_GAP);
+    window.set_valign(gtk::Align::Center);
     window.set_max_width_chars(1);
     window.set_single_line_mode(true);
     window.set_xalign(0.0);
@@ -114,6 +116,7 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &
 
     for workspace in &state.workspaces {
         let button = gtk::Button::with_label(&workspace.name);
+        button.set_cursor_from_name(Some("pointer"));
         if state.active_id == Some(workspace.id) {
             button.add_css_class("active");
         }
