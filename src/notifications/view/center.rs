@@ -11,7 +11,9 @@ use super::{
         Manager,
         model::{Group, Notification, Snapshot},
     },
-    common::{application, message, notification_time, progress_bar, set_picture},
+    common::{
+        activation_token, application, message, notification_time, progress_bar, set_picture,
+    },
 };
 
 const PANEL_WIDTH: i32 = 460;
@@ -312,7 +314,7 @@ struct GroupView {
     revealer: gtk::Revealer,
     row_views: Vec<RowView>,
     key: String,
-    notifications: Rc<RefCell<Vec<(u32, bool)>>>,
+    notifications: Rc<RefCell<Vec<u32>>>,
     collapsed: Rc<RefCell<HashSet<String>>>,
     manager: std::rc::Weak<Manager>,
     popover: gtk::Popover,
@@ -445,7 +447,7 @@ impl GroupView {
             group
                 .notifications
                 .iter()
-                .map(|notification| (notification.id, notification.active))
+                .map(|notification| notification.id)
                 .collect(),
         );
 
@@ -499,7 +501,7 @@ struct RowView {
     expand_space: gtk::Box,
     actions: gtk::FlowBox,
     actions_revealer: gtk::Revealer,
-    target: Rc<Cell<(u32, bool)>>,
+    target: Rc<Cell<u32>>,
     has_default: Rc<Cell<bool>>,
     identity: Cell<NotificationIdentity>,
     expanded: Rc<Cell<bool>>,
@@ -606,7 +608,7 @@ impl RowView {
         surface.append(&actions_revealer);
         container.append(&surface);
 
-        let target = Rc::new(Cell::new((0, false)));
+        let target = Rc::new(Cell::new(0));
         let has_default = Rc::new(Cell::new(false));
         highlight_on_hover(&content, &surface, &has_default);
         highlight_on_hover(&actions_revealer, &surface, &has_default);
@@ -633,11 +635,15 @@ impl RowView {
                 let manager = manager.clone();
                 let target = Rc::clone(&target);
                 let has_default = Rc::clone(&has_default);
-                move |_, _, _, _| {
+                move |gesture, _, _, _| {
                     if has_default.get()
                         && let Some(manager) = manager.upgrade()
                     {
-                        manager.invoke_action(target.get().0, "default");
+                        manager.invoke_action(
+                            target.get(),
+                            "default",
+                            gesture.widget().as_ref().and_then(activation_token),
+                        );
                     }
                 }
             });
@@ -649,8 +655,7 @@ impl RowView {
                 let target = Rc::clone(&target);
                 move |_, _, _, _| {
                     if let Some(manager) = manager.upgrade() {
-                        let (id, active) = target.get();
-                        manager.dismiss(id, active);
+                        manager.dismiss(target.get());
                     }
                 }
             });
@@ -682,8 +687,8 @@ impl RowView {
 
     fn update(&self, notification: &Notification) {
         let identity = (notification.id, notification.revision);
+        self.target.set(notification.id);
         let changed = self.identity.replace(identity) != identity;
-        self.target.set((notification.id, notification.active));
         let time = notification_time(notification.received_at);
         self.time.set_label(
             &time
@@ -716,9 +721,10 @@ impl RowView {
             .actions
             .iter()
             .any(|action| action.key == "default");
-        self.has_default.set(self.interactive && has_default);
+        let actionable = self.interactive;
+        self.has_default.set(actionable && has_default);
         self.surface
-            .set_cursor_from_name((self.interactive && has_default).then_some("pointer"));
+            .set_cursor_from_name((actionable && has_default).then_some("pointer"));
 
         while let Some(child) = self.actions.first_child() {
             self.actions.remove(&child);
@@ -738,14 +744,14 @@ impl RowView {
             let button = gtk::Button::builder().child(&label).build();
             button.set_cursor_from_name(Some("pointer"));
             button.add_css_class("notification-action");
-            button.set_sensitive(self.interactive);
+            button.set_sensitive(actionable);
             button.connect_clicked({
                 let manager = self.manager.clone();
                 let key = action.key.clone();
                 let id = notification.id;
-                move |_| {
+                move |button| {
                     if let Some(manager) = manager.upgrade() {
-                        manager.invoke_action(id, &key);
+                        manager.invoke_action(id, &key, activation_token(button));
                     }
                 }
             });

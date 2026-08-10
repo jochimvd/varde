@@ -4,21 +4,39 @@ use gio::prelude::*;
 use gtk::{gdk, glib, prelude::*};
 
 use super::super::model::{Group, Notification};
+use super::super::state::Picture;
+
+pub(super) fn activation_token(widget: &impl IsA<gtk::Widget>) -> Option<String> {
+    widget
+        .as_ref()
+        .display()
+        .app_launch_context()
+        .startup_notify_id(None::<&gio::AppInfo>, &[])
+        .map(Into::into)
+}
 
 pub(super) fn set_picture(image: &gtk::Image, notification: &Notification) -> bool {
-    if let Some(data) = &notification.thumbnail {
-        let bytes = glib::Bytes::from_owned(data.bytes.clone());
-        let texture = gdk::MemoryTexture::new(
-            data.width,
-            data.height,
-            gdk::MemoryFormat::R8g8b8a8,
-            &bytes,
-            data.rowstride,
-        );
-        image.set_from_gicon(&texture);
-        return true;
+    match notification.picture.as_ref() {
+        Some(Picture::Pixels(data)) => {
+            let bytes = glib::Bytes::from_owned(data.bytes.clone());
+            let texture = gdk::MemoryTexture::new(
+                data.width,
+                data.height,
+                gdk::MemoryFormat::R8g8b8a8,
+                &bytes,
+                data.rowstride,
+            );
+            image.set_from_gicon(&texture);
+            true
+        }
+        Some(Picture::Themed(icon))
+            if gtk::IconTheme::for_display(&image.display()).has_icon(icon) =>
+        {
+            image.set_icon_name(Some(icon));
+            true
+        }
+        _ => false,
     }
-    false
 }
 
 pub(super) fn progress_bar(value: u8) -> gtk::ProgressBar {
