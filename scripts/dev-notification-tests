@@ -77,7 +77,7 @@ next 'Send resident notification with a default action'
 notify \
     'Protocol Tests' 0 'dialog-information' \
     '[RESIDENT ACTION] Left-click acts but does not consume' \
-    'resident=true and timeout=0. Left-click should emit the default action while leaving this present; right-click dismisses it.' \
+    'resident=true and timeout=0. The timeout is ignored and the popup hides after five seconds. Left-click should emit the default action while leaving this present; right-click dismisses it.' \
     "['default', 'Open']" \
     "{'resident': <true>, 'urgency': <byte 1>}" 0
 
@@ -101,22 +101,22 @@ next 'Send non-resident notification with a default action'
 notify \
     'Protocol Tests' 0 'utilities-terminal' \
     '[NORMAL ACTION] Left-click acts and consumes' \
-    'resident=false and timeout=0. Left-click should emit the default action and remove this; right-click dismisses without action.' \
+    'resident=false and timeout=0. The timeout is ignored and the popup hides after five seconds. Left-click should emit the default action and remove this; right-click dismisses without action.' \
     "['default', 'Open']" \
     "{'resident': <false>, 'urgency': <byte 1>}" 0
 
-next 'Send critical notification using the server default timeout'
+next 'Send critical notification with no automatic popup timeout'
 notify \
     'Protocol Tests' 0 'dialog-error' \
-    '[CRITICAL DEFAULT] Persistent until dismissed' \
-    'urgency=critical and timeout=-1. The popup and notification should remain until explicitly removed.' \
+    '[CRITICAL DEFAULT] No automatic popup timeout' \
+    'urgency=critical and timeout=-1. The popup should remain until consumed by opening the notification center or explicitly removed.' \
     '[]' "{'urgency': <byte 2>}" -1
 
 next 'Send normal notification with an explicit zero timeout'
 notify \
     'Protocol Tests' 0 'emblem-default' \
-    '[ZERO TIMEOUT] Explicitly persistent' \
-    'urgency=normal and timeout=0. The popup and notification should remain until explicitly removed.' \
+    '[ZERO TIMEOUT] Application timeout ignored' \
+    'urgency=normal and timeout=0. The popup should hide after five seconds while the notification remains live in the center.' \
     '[]' "{'urgency': <byte 1>}" 0
 
 next 'Send notification with an application icon and raw image-data hint'
@@ -173,21 +173,21 @@ next 'Send transient notification with a short timeout'
 notify \
     'Protocol Tests' 0 'document-new' \
     '[TRANSIENT] Must not remain in the notification center' \
-    'transient=true and timeout=2500. Its popup should close and the notification should disappear completely.' \
+    'transient=true and timeout=2500. The timeout is ignored; after five seconds the popup and notification should disappear completely.' \
     '[]' "{'transient': <true>, 'urgency': <byte 1>}" 2500
 
 next 'Send actionable notification with a short popup timeout'
 notify \
     'Protocol Tests' 0 'mail-unread' \
     '[CENTER RETENTION] Popup hides; action remains live' \
-    'timeout=2500 should only hide the popup. Afterward, open the notification center, expand this row, and invoke Archive.' \
+    'timeout=2500 is ignored. After five seconds, open the notification center, expand this row, and invoke Archive.' \
     "['archive', 'Archive']" "{'urgency': <byte 1>}" 2500
 
 next 'Send critical notification with an explicit timeout'
 notify \
     'Protocol Tests' 0 'battery-caution' \
-    '[CRITICAL EXPLICIT TIMEOUT] Popup hides after four seconds' \
-    'urgency=critical and timeout=4000. The sender-provided timeout should hide the popup while retaining the notification in the center.' \
+    '[CRITICAL EXPLICIT TIMEOUT] Application timeout ignored' \
+    'urgency=critical and timeout=4000. The popup should have no automatic timeout, but opening the notification center should consume it.' \
     '[]' "{'urgency': <byte 2>}" 4000
 
 next 'Send a persistent notification for sender recall testing'

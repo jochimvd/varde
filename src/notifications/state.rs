@@ -3,8 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use super::image::Thumbnail;
 
 const MAX_NOTIFICATIONS: usize = 100;
-const LOW_TIMEOUT: Duration = Duration::from_secs(5);
-const NORMAL_TIMEOUT: Duration = Duration::from_secs(10);
+const POPUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum Urgency {
@@ -58,7 +57,6 @@ pub(super) struct Incoming {
     pub tag: String,
     pub transient: bool,
     pub resident: bool,
-    pub popup_timeout_ms: i32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -106,7 +104,7 @@ impl Store {
             .map(|index| self.notifications[index].notification.id)
             .unwrap_or_else(|| self.allocate_id());
         let revision = self.allocate_revision();
-        let popup_timeout = popup_timeout(incoming.popup_timeout_ms, incoming.urgency);
+        let popup_timeout = popup_timeout(incoming.urgency);
         let show_popup = replacement
             .map(|index| self.notifications[index].show_popup)
             .unwrap_or(true);
@@ -274,15 +272,10 @@ impl Store {
     }
 }
 
-fn popup_timeout(requested_ms: i32, urgency: Urgency) -> Option<Duration> {
-    match requested_ms {
-        0 => None,
-        timeout if timeout > 0 => Some(Duration::from_millis(timeout as u64)),
-        _ => match urgency {
-            Urgency::Low => Some(LOW_TIMEOUT),
-            Urgency::Normal => Some(NORMAL_TIMEOUT),
-            Urgency::Critical => None,
-        },
+fn popup_timeout(urgency: Urgency) -> Option<Duration> {
+    match urgency {
+        Urgency::Low | Urgency::Normal => Some(POPUP_TIMEOUT),
+        Urgency::Critical => None,
     }
 }
 
@@ -302,7 +295,6 @@ mod tests {
     fn incoming(summary: &str) -> Incoming {
         Incoming {
             summary: summary.into(),
-            popup_timeout_ms: -1,
             ..Incoming::default()
         }
     }
@@ -322,7 +314,6 @@ mod tests {
         let replacement = Incoming {
             replaces_id: first,
             summary: "updated".into(),
-            popup_timeout_ms: -1,
             ..Incoming::default()
         };
         assert_eq!(store.notify(replacement), first);
@@ -352,7 +343,6 @@ mod tests {
         let mut store = Store::default();
         let id = store.notify(Incoming {
             replaces_id: 42,
-            popup_timeout_ms: -1,
             ..Incoming::default()
         });
         assert_ne!(id, 42);
@@ -366,7 +356,6 @@ mod tests {
             app_name: app.into(),
             summary: summary.into(),
             tag: "progress".into(),
-            popup_timeout_ms: -1,
             ..Incoming::default()
         };
         let first = store.notify(tagged("one", "old"));
@@ -377,62 +366,42 @@ mod tests {
     }
 
     #[test]
-    fn popup_timeouts_use_current_system_defaults() {
+    fn non_critical_popups_hide_after_five_seconds() {
         let now = Instant::now();
         let mut store = Store::default();
         let low = store.notify(Incoming {
             urgency: Urgency::Low,
-            popup_timeout_ms: -1,
             ..Incoming::default()
         });
         let normal = store.notify(incoming("normal"));
         let critical = store.notify(Incoming {
             urgency: Urgency::Critical,
-            popup_timeout_ms: -1,
             ..Incoming::default()
         });
 
-        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT).is_empty());
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT).is_empty());
         assert!(store.displayed(low, 1, now));
         assert!(store.displayed(normal, 2, now));
         assert!(store.displayed(critical, 3, now));
 
-        assert!(store.hide_due_popups(now + LOW_TIMEOUT).is_empty());
-        assert!(!notification(&store, low).unwrap().1);
-        assert!(notification(&store, normal).unwrap().1);
-        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT).is_empty());
-        assert!(!notification(&store, normal).unwrap().1);
-        assert!(notification(&store, critical).unwrap().1);
-    }
-
-    #[test]
-    fn zero_timeout_keeps_the_popup_and_positive_timeout_hides_it() {
-        let now = Instant::now();
-        let mut store = Store::default();
-        let permanent = store.notify(Incoming::default());
-        let short = store.notify(Incoming {
-            popup_timeout_ms: 25,
-            ..Incoming::default()
-        });
-        assert!(store.displayed(permanent, 1, now));
-        assert!(store.displayed(short, 2, now));
         assert!(
             store
-                .hide_due_popups(now + Duration::from_millis(25))
+                .hide_due_popups(now + POPUP_TIMEOUT - Duration::from_millis(1))
                 .is_empty()
         );
-        assert!(notification(&store, permanent).unwrap().1);
-        assert!(!notification(&store, short).unwrap().1);
+        assert!(notification(&store, low).unwrap().1);
+        assert!(notification(&store, normal).unwrap().1);
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT).is_empty());
+        assert!(!notification(&store, low).unwrap().1);
+        assert!(!notification(&store, normal).unwrap().1);
+        assert!(notification(&store, critical).unwrap().1);
     }
 
     #[test]
     fn queued_popup_timeouts_start_only_after_display() {
         let now = Instant::now();
         let mut store = Store::default();
-        let id = store.notify(Incoming {
-            popup_timeout_ms: 25,
-            ..Incoming::default()
-        });
+        let id = store.notify(Incoming::default());
         let revision = notification(&store, id).unwrap().0.revision;
 
         assert!(
@@ -444,30 +413,29 @@ mod tests {
         assert!(store.displayed(id, revision, now + Duration::from_secs(1)));
         assert!(
             store
-                .hide_due_popups(now + Duration::from_secs(1) + Duration::from_millis(24))
+                .hide_due_popups(
+                    now + Duration::from_secs(1) + POPUP_TIMEOUT - Duration::from_millis(1)
+                )
                 .is_empty()
         );
         assert!(notification(&store, id).unwrap().1);
         assert!(
             store
-                .hide_due_popups(now + Duration::from_secs(1) + Duration::from_millis(25))
+                .hide_due_popups(now + Duration::from_secs(1) + POPUP_TIMEOUT)
                 .is_empty()
         );
         assert!(!notification(&store, id).unwrap().1);
     }
 
     #[test]
-    fn persistent_replacement_cancels_the_previous_popup_timeout() {
+    fn critical_replacement_cancels_the_previous_popup_timeout() {
         let now = Instant::now();
         let mut store = Store::default();
-        let id = store.notify(Incoming {
-            popup_timeout_ms: 25,
-            ..Incoming::default()
-        });
+        let id = store.notify(Incoming::default());
         assert!(store.displayed(id, 1, now));
         store.notify(Incoming {
             replaces_id: id,
-            popup_timeout_ms: 0,
+            urgency: Urgency::Critical,
             ..Incoming::default()
         });
 
@@ -488,21 +456,15 @@ mod tests {
                 key: "reply".into(),
                 label: "Reply".into(),
             }],
-            popup_timeout_ms: 25,
             ..Incoming::default()
         });
         assert!(store.displayed(id, 1, now));
-        assert!(
-            store
-                .hide_due_popups(now + Duration::from_millis(25))
-                .is_empty()
-        );
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT).is_empty());
 
         assert_eq!(
             store.notify(Incoming {
                 replaces_id: id,
                 summary: "updated".into(),
-                popup_timeout_ms: -1,
                 ..Incoming::default()
             }),
             id
@@ -529,7 +491,6 @@ mod tests {
         });
         let transient = store.notify(Incoming {
             transient: true,
-            popup_timeout_ms: -1,
             ..Incoming::default()
         });
         assert_eq!(
@@ -542,7 +503,7 @@ mod tests {
         assert!(store.displayed(regular, 1, now));
         assert!(store.displayed(transient, 2, now));
         assert_eq!(
-            store.hide_due_popups(now + NORMAL_TIMEOUT),
+            store.hide_due_popups(now + POPUP_TIMEOUT),
             vec![(transient, CloseReason::Expired)]
         );
         let (retained, show_popup) = notification(&store, regular).unwrap();
@@ -613,10 +574,10 @@ mod tests {
         let id = store.notify(incoming("hidden"));
         store.set_dnd(true);
         assert!(store.dnd());
-        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT).is_empty());
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT).is_empty());
         assert!(notification(&store, id).unwrap().1);
-        assert!(store.displayed(id, 1, now + NORMAL_TIMEOUT));
-        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT * 2).is_empty());
+        assert!(store.displayed(id, 1, now + POPUP_TIMEOUT));
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT * 2).is_empty());
         assert!(!notification(&store, id).unwrap().1);
     }
 }

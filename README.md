@@ -34,8 +34,10 @@ printf "Lock\nSuspend\nReboot\nShutdown" | varde launcher --dmenu -p "System..."
 ```
 
 Notifications include floating popups and a persistent notification center.
-Popup timeouts only clear the onscreen alert; notifications remain live in the
-center until they are actioned, dismissed, or recalled by their sender.
+Non-critical popups hide after five seconds; critical popups have no automatic
+timeout. Opening the notification center consumes visible popups. Notifications
+remain live in the center until they are actioned, dismissed, or recalled by
+their sender. The application-provided expiration timeout is ignored.
 
 ## Requirements
 
