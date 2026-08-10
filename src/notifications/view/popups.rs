@@ -11,6 +11,7 @@ use super::{
     super::{
         Manager,
         model::{Notification, Snapshot},
+        state::Urgency,
     },
     common::{activation_token, application, progress_bar, set_picture},
 };
@@ -257,7 +258,7 @@ fn popup_widget(
         });
     }
     card.add_css_class("notification-popup");
-    if notification.urgency.as_deref() == Some("critical") {
+    if notification.urgency == Urgency::Critical {
         card.add_css_class("critical");
     }
 

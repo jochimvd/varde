@@ -10,6 +10,7 @@ use super::{
     super::{
         Manager,
         model::{Group, Notification, Snapshot},
+        state::Urgency,
     },
     common::{
         activation_token, application, message, notification_time, progress_bar, set_picture,
@@ -702,7 +703,7 @@ impl RowView {
         }
 
         self.expanded.set(false);
-        if notification.urgency.as_deref() == Some("critical") {
+        if notification.urgency == Urgency::Critical {
             self.container.add_css_class("critical");
         } else {
             self.container.remove_css_class("critical");

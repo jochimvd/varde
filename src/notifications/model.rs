@@ -69,7 +69,7 @@ pub(super) struct Notification {
     pub summary: String,
     pub body: String,
     pub actions: Vec<state::Action>,
-    pub urgency: Option<String>,
+    pub urgency: state::Urgency,
 }
 
 pub(super) fn from_state(store: &state::Store) -> Snapshot {
@@ -96,14 +96,7 @@ fn from_state_notification(notification: &state::Notification, show_popup: bool)
         summary: notification.summary.clone(),
         body: notification.body.clone(),
         actions: notification.actions.clone(),
-        urgency: Some(
-            match notification.urgency {
-                state::Urgency::Low => "low",
-                state::Urgency::Normal => "normal",
-                state::Urgency::Critical => "critical",
-            }
-            .into(),
-        ),
+        urgency: notification.urgency,
     }
 }
 
@@ -201,7 +194,7 @@ fn notification(
         summary: String::new(),
         body: String::new(),
         actions: Vec::new(),
-        urgency: None,
+        urgency: state::Urgency::Normal,
     }
 }
 
