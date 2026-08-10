@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-pub(super) use super::image::Thumbnail;
+use super::image::Thumbnail;
 
 const MAX_NOTIFICATIONS: usize = 100;
 const LOW_TIMEOUT: Duration = Duration::from_secs(5);
@@ -20,6 +20,12 @@ pub(super) struct Action {
     pub label: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum Picture {
+    Pixels(Thumbnail),
+    Themed(String),
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct Notification {
     pub id: u32,
@@ -27,7 +33,7 @@ pub(super) struct Notification {
     pub received_at: i64,
     pub app_name: String,
     pub app_icon: String,
-    pub thumbnail: Option<Thumbnail>,
+    pub picture: Option<Picture>,
     pub progress: Option<u8>,
     pub summary: String,
     pub body: String,
@@ -42,7 +48,7 @@ pub(super) struct Incoming {
     pub replaces_id: u32,
     pub app_name: String,
     pub app_icon: String,
-    pub thumbnail: Option<Thumbnail>,
+    pub picture: Option<Picture>,
     pub progress: Option<u8>,
     pub summary: String,
     pub body: String,
@@ -52,7 +58,7 @@ pub(super) struct Incoming {
     pub tag: String,
     pub transient: bool,
     pub resident: bool,
-    pub timeout_ms: i32,
+    pub popup_timeout_ms: i32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,23 +66,24 @@ pub(super) enum CloseReason {
     Expired = 1,
     Dismissed = 2,
     Requested = 3,
+    Undefined = 4,
 }
 
 #[derive(Clone, Debug)]
-struct Active {
+struct Stored {
     notification: Notification,
     tag: String,
     transient: bool,
-    timeout: Option<Duration>,
-    expires_at: Option<Instant>,
+    popup_timeout: Option<Duration>,
+    popup_deadline: Option<Instant>,
+    show_popup: bool,
 }
 
 #[derive(Default)]
 pub(super) struct Store {
     next_id: u32,
     next_revision: u64,
-    active: Vec<Active>,
-    history: Vec<Notification>,
+    notifications: Vec<Stored>,
     dnd: bool,
 }
 
@@ -96,18 +103,21 @@ impl Store {
             .then(|| self.evict_at_capacity())
             .flatten();
         let id = replacement
-            .map(|index| self.active[index].notification.id)
+            .map(|index| self.notifications[index].notification.id)
             .unwrap_or_else(|| self.allocate_id());
         let revision = self.allocate_revision();
-        let timeout = timeout(incoming.timeout_ms, incoming.urgency);
-        let active = Active {
+        let popup_timeout = popup_timeout(incoming.popup_timeout_ms, incoming.urgency);
+        let show_popup = replacement
+            .map(|index| self.notifications[index].show_popup)
+            .unwrap_or(true);
+        let stored = Stored {
             notification: Notification {
                 id,
                 revision,
                 received_at: unix_now(),
                 app_name: incoming.app_name,
                 app_icon: incoming.app_icon,
-                thumbnail: incoming.thumbnail,
+                picture: incoming.picture,
                 progress: incoming.progress,
                 summary: incoming.summary,
                 body: incoming.body,
@@ -118,87 +128,81 @@ impl Store {
             },
             tag: incoming.tag,
             transient: incoming.transient,
-            timeout,
-            expires_at: timeout
-                .and_then(|_| replacement.and_then(|index| self.active[index].expires_at)),
+            popup_timeout,
+            popup_deadline: popup_timeout.and_then(|_| {
+                replacement.and_then(|index| self.notifications[index].popup_deadline)
+            }),
+            show_popup,
         };
 
         if let Some(index) = replacement {
-            self.active[index] = active;
+            self.notifications[index] = stored;
         } else {
-            self.active.insert(0, active);
+            self.notifications.insert(0, stored);
         }
         (id, evicted)
     }
 
-    pub fn close(&mut self, id: u32, keep_history: bool) -> bool {
+    pub fn close(&mut self, id: u32) -> bool {
         let Some(index) = self
-            .active
+            .notifications
             .iter()
-            .position(|active| active.notification.id == id)
+            .position(|stored| stored.notification.id == id)
         else {
             return false;
         };
-        let active = self.active.remove(index);
-        if keep_history && !active.transient {
-            self.history.insert(0, active.notification);
-        }
+        self.notifications.remove(index);
         true
     }
 
-    pub fn remove_history(&mut self, id: u32) -> bool {
-        let Some(index) = self
-            .history
+    // Popup timeouts end presentation, not the notification's lifetime.
+    pub fn hide_due_popups(&mut self, now: Instant) -> Vec<(u32, CloseReason)> {
+        let due = self
+            .notifications
             .iter()
-            .position(|notification| notification.id == id)
-        else {
-            return false;
-        };
-        self.history.remove(index);
-        true
-    }
-
-    pub fn expire(&mut self, now: Instant) -> Vec<(u32, CloseReason)> {
-        let expired: Vec<_> = self
-            .active
-            .iter()
-            .filter(|active| active.expires_at.is_some_and(|at| at <= now))
-            .map(|active| active.notification.id)
-            .collect();
-        for id in &expired {
-            self.close(*id, true);
+            .enumerate()
+            .filter(|(_, stored)| stored.popup_deadline.is_some_and(|at| at <= now))
+            .map(|(index, _)| index)
+            .collect::<Vec<_>>();
+        let mut closed = Vec::new();
+        for index in due.into_iter().rev() {
+            if self.notifications[index].transient {
+                let id = self.notifications.remove(index).notification.id;
+                closed.push((id, CloseReason::Expired));
+            } else {
+                self.notifications[index].show_popup = false;
+                self.notifications[index].popup_deadline = None;
+            }
         }
-        expired
-            .into_iter()
-            .map(|id| (id, CloseReason::Expired))
-            .collect()
+        closed
     }
 
     pub fn displayed(&mut self, id: u32, revision: u64, now: Instant) -> bool {
-        let Some(active) = self.active.iter_mut().find(|active| {
-            active.notification.id == id && active.notification.revision == revision
+        let Some(stored) = self.notifications.iter_mut().find(|stored| {
+            stored.notification.id == id && stored.notification.revision == revision
         }) else {
             return false;
         };
-        active.expires_at = active.timeout.and_then(|timeout| now.checked_add(timeout));
+        stored.popup_deadline = stored
+            .popup_timeout
+            .and_then(|timeout| now.checked_add(timeout));
         true
     }
 
-    pub fn next_expiration(&self) -> Option<Instant> {
-        self.active
+    pub fn next_popup_deadline(&self) -> Option<Instant> {
+        self.notifications
             .iter()
-            .filter_map(|active| active.expires_at)
+            .filter_map(|stored| stored.popup_deadline)
             .min()
     }
 
     pub fn clear(&mut self) -> Vec<(u32, CloseReason)> {
         let closed = self
-            .active
+            .notifications
             .iter()
-            .map(|active| (active.notification.id, CloseReason::Dismissed))
+            .map(|stored| (stored.notification.id, CloseReason::Dismissed))
             .collect();
-        self.active.clear();
-        self.history.clear();
+        self.notifications.clear();
         closed
     }
 
@@ -210,69 +214,41 @@ impl Store {
         self.dnd
     }
 
-    pub fn active(&self) -> impl Iterator<Item = &Notification> {
-        self.active.iter().map(|active| &active.notification)
-    }
-
-    pub fn has_action(&self, id: u32, key: &str) -> bool {
-        self.active().chain(self.history()).any(|notification| {
-            notification.id == id && notification.actions.iter().any(|action| action.key == key)
-        })
-    }
-
-    pub fn is_active(&self, id: u32) -> bool {
-        self.active().any(|notification| notification.id == id)
-    }
-
-    pub fn is_resident(&self, id: u32) -> bool {
-        self.active()
-            .chain(self.history())
-            .any(|notification| notification.id == id && notification.resident)
-    }
-
-    pub fn history(&self) -> impl Iterator<Item = &Notification> {
-        self.history.iter()
+    pub fn notifications(&self) -> impl Iterator<Item = (&Notification, bool)> {
+        self.notifications
+            .iter()
+            .map(|stored| (&stored.notification, stored.show_popup))
     }
 
     fn replacement_index(&self, incoming: &Incoming) -> Option<usize> {
         if incoming.replaces_id != 0
             && let Some(index) = self
-                .active
+                .notifications
                 .iter()
-                .position(|active| active.notification.id == incoming.replaces_id)
+                .position(|stored| stored.notification.id == incoming.replaces_id)
         {
             return Some(index);
         }
         if incoming.tag.is_empty() {
             return None;
         }
-        self.active.iter().position(|active| {
-            active.tag == incoming.tag && active.notification.app_name == incoming.app_name
+        self.notifications.iter().position(|stored| {
+            stored.tag == incoming.tag && stored.notification.app_name == incoming.app_name
         })
     }
 
     fn evict_at_capacity(&mut self) -> Option<(u32, CloseReason)> {
-        if self.active.len() + self.history.len() < MAX_NOTIFICATIONS {
+        if self.notifications.len() < MAX_NOTIFICATIONS {
             return None;
         }
-        let active = self
-            .active
+        let index = self
+            .notifications
             .iter()
             .enumerate()
-            .map(|(index, active)| (active.notification.revision, true, index));
-        let history = self
-            .history
-            .iter()
-            .enumerate()
-            .map(|(index, notification)| (notification.revision, false, index));
-        let (_, is_active, index) = active.chain(history).min_by_key(|item| item.0)?;
-        if is_active {
-            let id = self.active.remove(index).notification.id;
-            Some((id, CloseReason::Expired))
-        } else {
-            self.history.remove(index);
-            None
-        }
+            .min_by_key(|(_, stored)| stored.notification.revision)
+            .map(|(index, _)| index)?;
+        let id = self.notifications.remove(index).notification.id;
+        Some((id, CloseReason::Undefined))
     }
 
     fn allocate_id(&mut self) -> u32 {
@@ -280,13 +256,9 @@ impl Store {
             self.next_id = self.next_id.wrapping_add(1);
             if self.next_id != 0
                 && !self
-                    .active
+                    .notifications
                     .iter()
-                    .any(|active| active.notification.id == self.next_id)
-                && !self
-                    .history
-                    .iter()
-                    .any(|notification| notification.id == self.next_id)
+                    .any(|stored| stored.notification.id == self.next_id)
             {
                 return self.next_id;
             }
@@ -302,7 +274,7 @@ impl Store {
     }
 }
 
-fn timeout(requested_ms: i32, urgency: Urgency) -> Option<Duration> {
+fn popup_timeout(requested_ms: i32, urgency: Urgency) -> Option<Duration> {
     match requested_ms {
         0 => None,
         timeout if timeout > 0 => Some(Duration::from_millis(timeout as u64)),
@@ -330,13 +302,19 @@ mod tests {
     fn incoming(summary: &str) -> Incoming {
         Incoming {
             summary: summary.into(),
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         }
     }
 
+    fn notification(store: &Store, id: u32) -> Option<(&Notification, bool)> {
+        store
+            .notifications()
+            .find(|(notification, _)| notification.id == id)
+    }
+
     #[test]
-    fn allocates_ids_and_replaces_active_notifications_in_place() {
+    fn allocates_ids_and_replaces_notifications_in_place() {
         let mut store = Store::default();
         let first = store.notify(incoming("first"));
         let second = store.notify(incoming("second"));
@@ -344,12 +322,12 @@ mod tests {
         let replacement = Incoming {
             replaces_id: first,
             summary: "updated".into(),
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         };
         assert_eq!(store.notify(replacement), first);
-        assert_eq!(store.active().count(), 2);
-        assert_eq!(store.active().nth(1).unwrap().summary, "updated");
+        assert_eq!(store.notifications().count(), 2);
+        assert_eq!(notification(&store, first).unwrap().0.summary, "updated");
         assert_ne!(first, second);
     }
 
@@ -357,7 +335,7 @@ mod tests {
     fn replacements_always_receive_a_new_revision() {
         let mut store = Store::default();
         let id = store.notify(incoming("same"));
-        let revision = store.active().next().unwrap().revision;
+        let revision = notification(&store, id).unwrap().0.revision;
 
         assert_eq!(
             store.notify(Incoming {
@@ -366,7 +344,7 @@ mod tests {
             }),
             id
         );
-        assert!(store.active().next().unwrap().revision > revision);
+        assert!(notification(&store, id).unwrap().0.revision > revision);
     }
 
     #[test]
@@ -374,7 +352,7 @@ mod tests {
         let mut store = Store::default();
         let id = store.notify(Incoming {
             replaces_id: 42,
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         });
         assert_ne!(id, 42);
@@ -388,168 +366,215 @@ mod tests {
             app_name: app.into(),
             summary: summary.into(),
             tag: "progress".into(),
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         };
         let first = store.notify(tagged("one", "old"));
         let other = store.notify(tagged("two", "other"));
         assert_eq!(store.notify(tagged("one", "new")), first);
-        assert_eq!(store.active().count(), 2);
+        assert_eq!(store.notifications().count(), 2);
         assert_ne!(first, other);
     }
 
     #[test]
-    fn expiration_uses_current_system_defaults() {
+    fn popup_timeouts_use_current_system_defaults() {
         let now = Instant::now();
         let mut store = Store::default();
         let low = store.notify(Incoming {
             urgency: Urgency::Low,
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         });
         let normal = store.notify(incoming("normal"));
         let critical = store.notify(Incoming {
             urgency: Urgency::Critical,
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         });
 
-        assert!(store.expire(now + NORMAL_TIMEOUT).is_empty());
+        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT).is_empty());
         assert!(store.displayed(low, 1, now));
         assert!(store.displayed(normal, 2, now));
         assert!(store.displayed(critical, 3, now));
 
-        assert_eq!(
-            store.expire(now + LOW_TIMEOUT),
-            vec![(low, CloseReason::Expired)]
-        );
-        assert_eq!(
-            store.expire(now + NORMAL_TIMEOUT),
-            vec![(normal, CloseReason::Expired)]
-        );
-        assert!(
-            store
-                .active()
-                .any(|notification| notification.id == critical)
-        );
+        assert!(store.hide_due_popups(now + LOW_TIMEOUT).is_empty());
+        assert!(!notification(&store, low).unwrap().1);
+        assert!(notification(&store, normal).unwrap().1);
+        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT).is_empty());
+        assert!(!notification(&store, normal).unwrap().1);
+        assert!(notification(&store, critical).unwrap().1);
     }
 
     #[test]
-    fn zero_timeout_never_expires_and_positive_timeout_is_honored() {
+    fn zero_timeout_keeps_the_popup_and_positive_timeout_hides_it() {
         let now = Instant::now();
         let mut store = Store::default();
         let permanent = store.notify(Incoming::default());
         let short = store.notify(Incoming {
-            timeout_ms: 25,
+            popup_timeout_ms: 25,
             ..Incoming::default()
         });
         assert!(store.displayed(permanent, 1, now));
         assert!(store.displayed(short, 2, now));
-        assert_eq!(
-            store.expire(now + Duration::from_millis(25)),
-            vec![(short, CloseReason::Expired)]
-        );
         assert!(
             store
-                .active()
-                .any(|notification| notification.id == permanent)
+                .hide_due_popups(now + Duration::from_millis(25))
+                .is_empty()
         );
+        assert!(notification(&store, permanent).unwrap().1);
+        assert!(!notification(&store, short).unwrap().1);
     }
 
     #[test]
-    fn queued_notifications_start_expiring_only_after_display() {
+    fn queued_popup_timeouts_start_only_after_display() {
         let now = Instant::now();
         let mut store = Store::default();
         let id = store.notify(Incoming {
-            timeout_ms: 25,
+            popup_timeout_ms: 25,
             ..Incoming::default()
         });
-        let revision = store.active().next().unwrap().revision;
+        let revision = notification(&store, id).unwrap().0.revision;
 
-        assert!(store.expire(now + Duration::from_secs(1)).is_empty());
+        assert!(
+            store
+                .hide_due_popups(now + Duration::from_secs(1))
+                .is_empty()
+        );
+        assert!(notification(&store, id).unwrap().1);
         assert!(store.displayed(id, revision, now + Duration::from_secs(1)));
         assert!(
             store
-                .expire(now + Duration::from_secs(1) + Duration::from_millis(24))
+                .hide_due_popups(now + Duration::from_secs(1) + Duration::from_millis(24))
                 .is_empty()
         );
-        assert_eq!(
-            store.expire(now + Duration::from_secs(1) + Duration::from_millis(25)),
-            vec![(id, CloseReason::Expired)]
+        assert!(notification(&store, id).unwrap().1);
+        assert!(
+            store
+                .hide_due_popups(now + Duration::from_secs(1) + Duration::from_millis(25))
+                .is_empty()
         );
+        assert!(!notification(&store, id).unwrap().1);
     }
 
     #[test]
-    fn persistent_replacement_cancels_the_previous_expiration() {
+    fn persistent_replacement_cancels_the_previous_popup_timeout() {
         let now = Instant::now();
         let mut store = Store::default();
         let id = store.notify(Incoming {
-            timeout_ms: 25,
+            popup_timeout_ms: 25,
             ..Incoming::default()
         });
         assert!(store.displayed(id, 1, now));
         store.notify(Incoming {
             replaces_id: id,
-            timeout_ms: 0,
+            popup_timeout_ms: 0,
             ..Incoming::default()
         });
 
-        assert!(store.expire(now + Duration::from_secs(1)).is_empty());
+        assert!(
+            store
+                .hide_due_popups(now + Duration::from_secs(1))
+                .is_empty()
+        );
+        assert!(notification(&store, id).unwrap().1);
     }
 
     #[test]
-    fn dismissal_and_expiration_preserve_history_except_for_transient_items() {
+    fn replacing_a_hidden_notification_keeps_it_in_the_center_without_a_popup() {
+        let now = Instant::now();
+        let mut store = Store::default();
+        let id = store.notify(Incoming {
+            actions: vec![Action {
+                key: "reply".into(),
+                label: "Reply".into(),
+            }],
+            popup_timeout_ms: 25,
+            ..Incoming::default()
+        });
+        assert!(store.displayed(id, 1, now));
+        assert!(
+            store
+                .hide_due_popups(now + Duration::from_millis(25))
+                .is_empty()
+        );
+
+        assert_eq!(
+            store.notify(Incoming {
+                replaces_id: id,
+                summary: "updated".into(),
+                popup_timeout_ms: -1,
+                ..Incoming::default()
+            }),
+            id
+        );
+        let (updated, show_popup) = notification(&store, id).unwrap();
+        assert_eq!(updated.summary, "updated");
+        assert!(updated.actions.is_empty());
+        assert!(!show_popup);
+    }
+
+    #[test]
+    fn popup_timeout_preserves_notifications_except_for_transient_items() {
+        let now = Instant::now();
         let mut store = Store::default();
         let pixels: Arc<[u8]> = Arc::from([0, 0, 0, 0]);
         let regular = store.notify(Incoming {
-            thumbnail: Some(Thumbnail {
+            picture: Some(Picture::Pixels(Thumbnail {
                 width: 1,
                 height: 1,
                 rowstride: 4,
                 bytes: Arc::clone(&pixels),
-            }),
+            })),
             ..incoming("regular")
         });
         let transient = store.notify(Incoming {
             transient: true,
-            timeout_ms: -1,
+            popup_timeout_ms: -1,
             ..Incoming::default()
         });
-        assert!(store.close(regular, true));
-        assert!(store.close(transient, true));
         assert_eq!(
-            store.history().map(|item| item.id).collect::<Vec<_>>(),
-            [regular]
+            store
+                .notifications()
+                .map(|(notification, _)| notification.id)
+                .collect::<Vec<_>>(),
+            [transient, regular]
         );
-        let archived = store.history().next().unwrap();
-        assert!(Arc::ptr_eq(
-            &archived.thumbnail.as_ref().unwrap().bytes,
-            &pixels
-        ));
+        assert!(store.displayed(regular, 1, now));
+        assert!(store.displayed(transient, 2, now));
+        assert_eq!(
+            store.hide_due_popups(now + NORMAL_TIMEOUT),
+            vec![(transient, CloseReason::Expired)]
+        );
+        let (retained, show_popup) = notification(&store, regular).unwrap();
+        assert!(!show_popup);
+        let Some(Picture::Pixels(thumbnail)) = &retained.picture else {
+            panic!("expected pixel picture");
+        };
+        assert!(Arc::ptr_eq(&thumbnail.bytes, &pixels));
+        assert!(notification(&store, transient).is_none());
     }
 
     #[test]
-    fn sender_recall_does_not_preserve_history() {
+    fn sender_recall_removes_the_notification() {
         let mut store = Store::default();
         let id = store.notify(incoming("recalled"));
 
-        assert!(store.close(id, false));
-        assert_eq!(store.active().count(), 0);
-        assert_eq!(store.history().count(), 0);
+        assert!(store.close(id));
+        assert_eq!(store.notifications().count(), 0);
     }
 
     #[test]
-    fn active_and_history_share_one_bound() {
+    fn notification_count_is_bounded() {
         let mut store = Store::default();
+        let mut evicted = Vec::new();
         for index in 0..MAX_NOTIFICATIONS + 5 {
-            let id = store.notify(incoming(&index.to_string()));
-            store.close(id, true);
+            if let Some((id, _)) = store.notify_with_eviction(incoming(&index.to_string())).1 {
+                evicted.push(id);
+            }
         }
-        assert_eq!(
-            store.active().count() + store.history().count(),
-            MAX_NOTIFICATIONS
-        );
-        assert_eq!(store.history().next().unwrap().summary, "104");
+        assert_eq!(store.notifications().count(), MAX_NOTIFICATIONS);
+        assert_eq!(evicted.len(), 5);
+        assert_eq!(store.notifications().next().unwrap().0.summary, "104");
     }
 
     #[test]
@@ -565,82 +590,33 @@ mod tests {
         });
         assert_eq!(id, first);
         assert!(evicted.is_none());
-        assert_eq!(store.active().count(), MAX_NOTIFICATIONS);
+        assert_eq!(store.notifications().count(), MAX_NOTIFICATIONS);
     }
 
     #[test]
-    fn evicts_the_oldest_notification_across_active_and_history() {
+    fn capacity_eviction_closes_the_oldest_notification() {
         let mut store = Store::default();
-        let oldest = store.notify(incoming("history"));
-        store.close(oldest, true);
+        let oldest = store.notify(incoming("oldest"));
         for index in 1..MAX_NOTIFICATIONS {
             store.notify(incoming(&index.to_string()));
         }
         let (_, evicted) = store.notify_with_eviction(incoming("new"));
-        assert!(evicted.is_none());
-        assert!(
-            !store
-                .history()
-                .any(|notification| notification.id == oldest)
-        );
-        assert_eq!(
-            store.active().count() + store.history().count(),
-            MAX_NOTIFICATIONS
-        );
+        assert_eq!(evicted, Some((oldest, CloseReason::Undefined)));
+        assert!(notification(&store, oldest).is_none());
+        assert_eq!(store.notifications().count(), MAX_NOTIFICATIONS);
     }
 
     #[test]
-    fn active_capacity_eviction_is_reported_as_expired() {
-        let mut store = Store::default();
-        let oldest = store.notify(incoming("oldest active"));
-        let archived = store.notify(incoming("newer history"));
-        store.close(archived, true);
-        for index in 2..MAX_NOTIFICATIONS {
-            store.notify(incoming(&index.to_string()));
-        }
-        let (_, evicted) = store.notify_with_eviction(incoming("new"));
-        assert_eq!(evicted, Some((oldest, CloseReason::Expired)));
-        assert!(!store.active().any(|notification| notification.id == oldest));
-        assert!(
-            store
-                .history()
-                .any(|notification| notification.id == archived)
-        );
-    }
-
-    #[test]
-    fn dnd_does_not_start_expiration_before_display() {
+    fn dnd_does_not_start_the_popup_timeout_before_display() {
         let now = Instant::now();
         let mut store = Store::default();
         let id = store.notify(incoming("hidden"));
         store.set_dnd(true);
         assert!(store.dnd());
-        assert!(store.expire(now + NORMAL_TIMEOUT).is_empty());
+        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT).is_empty());
+        assert!(notification(&store, id).unwrap().1);
         assert!(store.displayed(id, 1, now + NORMAL_TIMEOUT));
-        assert_eq!(
-            store.expire(now + NORMAL_TIMEOUT * 2),
-            vec![(id, CloseReason::Expired)]
-        );
-    }
-
-    #[test]
-    fn finds_actions_only_on_the_target_notification() {
-        let mut store = Store::default();
-        let id = store.notify(Incoming {
-            actions: vec![Action {
-                key: "reply".into(),
-                label: "Reply".into(),
-            }],
-            ..Incoming::default()
-        });
-        let other = store.notify(Incoming::default());
-
-        assert!(store.has_action(id, "reply"));
-        assert!(!store.has_action(id, "default"));
-        assert!(!store.has_action(other, "reply"));
-
-        store.close(id, true);
-        assert!(store.has_action(id, "reply"));
-        assert!(!store.is_active(id));
+        assert!(store.hide_due_popups(now + NORMAL_TIMEOUT * 2).is_empty());
+        assert!(!notification(&store, id).unwrap().1);
     }
 }

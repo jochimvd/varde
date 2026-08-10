@@ -1,6 +1,7 @@
 mod daemon;
 mod image;
 mod model;
+mod sound;
 mod state;
 mod view;
 
@@ -110,21 +111,21 @@ impl Manager {
         }
     }
 
-    pub(super) fn dismiss(&self, id: u32, active: bool) {
+    pub(super) fn dismiss(&self, id: u32) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
-            daemon.dismiss(id, active);
+            daemon.dismiss(id);
         }
     }
 
-    pub(super) fn dismiss_group(&self, notifications: Vec<(u32, bool)>) {
+    pub(super) fn dismiss_group(&self, notifications: Vec<u32>) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
             daemon.dismiss_group(notifications);
         }
     }
 
-    pub(super) fn invoke_action(&self, id: u32, key: &str) {
+    pub(super) fn invoke_action(&self, id: u32, key: &str, activation_token: Option<String>) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
-            daemon.invoke_action(id, key.to_string());
+            daemon.invoke_action(id, key.to_string(), activation_token);
         }
     }
 

@@ -12,7 +12,7 @@ use super::{
         Manager,
         model::{Notification, Snapshot},
     },
-    common::{application, progress_bar, set_picture},
+    common::{activation_token, application, progress_bar, set_picture},
 };
 
 const POPUP_NAME: &str = "varde-notification-popups";
@@ -37,27 +37,27 @@ pub(super) struct PopupState {
 
 impl PopupState {
     pub(super) fn update(&mut self, snapshot: &Snapshot, blocked: bool) -> Vec<(u32, u64)> {
-        let active_ids = snapshot
+        let popup_ids = snapshot
             .groups
             .iter()
             .flat_map(|group| &group.notifications)
-            .filter(|notification| notification.active)
+            .filter(|notification| notification.show_popup)
             .map(|notification| notification.id)
             .collect::<HashSet<_>>();
-        self.displayed.retain(|id, _| active_ids.contains(id));
-        self.visible.retain(|id| active_ids.contains(id));
+        self.displayed.retain(|id, _| popup_ids.contains(id));
+        self.visible.retain(|id| popup_ids.contains(id));
         if blocked {
             self.visible.clear();
             return Vec::new();
         }
-        let mut active = snapshot
+        let mut pending = snapshot
             .groups
             .iter()
             .flat_map(|group| &group.notifications)
-            .filter(|notification| notification.active)
+            .filter(|notification| notification.show_popup)
             .collect::<Vec<_>>();
         let mut displayed = Vec::new();
-        for notification in &active {
+        for notification in &pending {
             if self.visible.contains(&notification.id)
                 && self.displayed.get(&notification.id) != Some(&notification.revision)
             {
@@ -66,9 +66,9 @@ impl PopupState {
                 displayed.push((notification.id, notification.revision));
             }
         }
-        active.sort_unstable_by_key(|notification| notification.revision);
+        pending.sort_unstable_by_key(|notification| notification.revision);
         let mut available = MAX_POPUPS.saturating_sub(self.visible.len());
-        for notification in active {
+        for notification in pending {
             if available == 0 || self.displayed.contains_key(&notification.id) {
                 continue;
             }
@@ -240,26 +240,26 @@ fn popup_widget(
     card_content.append(&content);
 
     let card = gtk::Button::builder().child(&card_content).build();
-    if notification
+    let has_default = notification
         .actions
         .iter()
-        .any(|action| action.key == "default")
-    {
+        .any(|action| action.key == "default");
+    if has_default {
         card.set_cursor_from_name(Some("pointer"));
+        card.connect_clicked({
+            let manager = manager.clone();
+            let id = notification.id;
+            move |card| {
+                if let Some(manager) = manager.upgrade() {
+                    manager.invoke_action(id, "default", activation_token(card));
+                }
+            }
+        });
     }
     card.add_css_class("notification-popup");
     if notification.urgency.as_deref() == Some("critical") {
         card.add_css_class("critical");
     }
-    card.connect_clicked({
-        let manager = manager.clone();
-        let id = notification.id;
-        move |_| {
-            if let Some(manager) = manager.upgrade() {
-                manager.invoke_action(id, "default");
-            }
-        }
-    });
 
     let dismiss = gtk::GestureClick::new();
     dismiss.set_button(3);
@@ -271,7 +271,7 @@ fn popup_widget(
             if card.contains(x, y)
                 && let Some(manager) = manager.upgrade()
             {
-                manager.dismiss(id, true);
+                manager.dismiss(id);
             }
         }
     });

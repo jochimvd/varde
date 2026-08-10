@@ -39,7 +39,7 @@ mod tests {
     }
 
     #[test]
-    fn replacements_update_visible_popups_without_resurfacing_hidden_ones() {
+    fn replacements_update_visible_popups_and_blocked_popups_do_not_resurface() {
         let first = super::super::model::test_snapshot(&[(1, 1)]);
         let replaced = super::super::model::test_snapshot(&[(1, 2)]);
         let empty = super::super::model::test_snapshot(&[]);
@@ -59,6 +59,22 @@ mod tests {
         state.update(&empty, false);
         assert_eq!(state.update(&first, false), vec![(1, 1)]);
         assert!(state.visible.contains(&1));
+    }
+
+    #[test]
+    fn hidden_notifications_and_their_replacements_do_not_resurface() {
+        let visible = super::super::model::test_snapshot_with_popup(&[(1, 1, true)]);
+        let hidden = super::super::model::test_snapshot_with_popup(&[(1, 1, false)]);
+        let replaced = super::super::model::test_snapshot_with_popup(&[(1, 2, false)]);
+        let mut state = PopupState::default();
+
+        assert_eq!(state.update(&visible, false), vec![(1, 1)]);
+        assert!(state.visible.contains(&1));
+
+        assert!(state.update(&hidden, false).is_empty());
+        assert!(!state.visible.contains(&1));
+        assert!(state.update(&replaced, false).is_empty());
+        assert!(!state.visible.contains(&1));
     }
 
     #[test]

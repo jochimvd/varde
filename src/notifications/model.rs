@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use super::state;
 
@@ -60,10 +60,10 @@ pub(super) struct Notification {
     pub id: u32,
     pub revision: u64,
     pub received_at: Option<i64>,
-    pub active: bool,
+    pub show_popup: bool,
     app_name: Option<String>,
     pub app_icon: Option<String>,
-    pub thumbnail: Option<state::Thumbnail>,
+    pub picture: Option<state::Picture>,
     pub progress: Option<u8>,
     desktop_entry: Option<String>,
     pub summary: String,
@@ -73,24 +73,23 @@ pub(super) struct Notification {
 }
 
 pub(super) fn from_state(store: &state::Store) -> Snapshot {
-    let active = store
-        .active()
-        .map(|notification| from_state_notification(notification, true));
-    let history = store
-        .history()
-        .map(|notification| from_state_notification(notification, false));
-    group(active.chain(history), store.dnd())
+    group(
+        store
+            .notifications()
+            .map(|(notification, show_popup)| from_state_notification(notification, show_popup)),
+        store.dnd(),
+    )
 }
 
-fn from_state_notification(notification: &state::Notification, active: bool) -> Notification {
+fn from_state_notification(notification: &state::Notification, show_popup: bool) -> Notification {
     Notification {
         id: notification.id,
         revision: notification.revision,
         received_at: Some(notification.received_at),
-        active,
+        show_popup,
         app_name: Some(notification.app_name.clone()),
         app_icon: (!notification.app_icon.is_empty()).then(|| notification.app_icon.clone()),
-        thumbnail: notification.thumbnail.clone(),
+        picture: notification.picture.clone(),
         progress: notification.progress,
         desktop_entry: (!notification.desktop_entry.is_empty())
             .then(|| notification.desktop_entry.clone()),
@@ -111,12 +110,8 @@ fn from_state_notification(notification: &state::Notification, active: bool) -> 
 fn group(notifications: impl Iterator<Item = Notification>, dnd: bool) -> Snapshot {
     let mut groups = Vec::<Group>::new();
     let mut indexes = HashMap::<String, usize>::new();
-    let mut ids = HashSet::new();
 
     for notification in notifications {
-        if !ids.insert(notification.id) {
-            continue;
-        }
         let key = application_key(&notification);
         let index = *indexes.entry(key.clone()).or_insert_with(|| {
             let index = groups.len();
@@ -135,7 +130,7 @@ fn group(notifications: impl Iterator<Item = Notification>, dnd: bool) -> Snapsh
         groups[index].notifications.push(notification);
     }
 
-    let count = ids.len();
+    let count = groups.iter().map(|group| group.notifications.len()).sum();
     Snapshot {
         groups,
         count,
@@ -176,21 +171,31 @@ pub(super) fn test_snapshot(notifications: &[(u32, u64)]) -> Snapshot {
 }
 
 #[cfg(test)]
+pub(super) fn test_snapshot_with_popup(notifications: &[(u32, u64, bool)]) -> Snapshot {
+    group(
+        notifications
+            .iter()
+            .map(|&(id, revision, show_popup)| notification(id, revision, None, None, show_popup)),
+        false,
+    )
+}
+
+#[cfg(test)]
 fn notification(
     id: u32,
     revision: u64,
     app_name: Option<&str>,
     desktop_entry: Option<&str>,
-    active: bool,
+    show_popup: bool,
 ) -> Notification {
     Notification {
         id,
         revision,
         received_at: None,
-        active,
+        show_popup,
         app_name: app_name.map(str::to_string),
         app_icon: None,
-        thumbnail: None,
+        picture: None,
         progress: None,
         desktop_entry: desktop_entry.map(str::to_string),
         summary: String::new(),
@@ -205,14 +210,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn groups_active_before_history_and_deduplicates_ids() {
-        let mut active_chat = notification(2, 1, Some("Chat"), None, true);
-        active_chat.summary = "Active".into();
+    fn groups_notifications_by_application() {
+        let mut chat = notification(2, 1, Some("Chat"), None, true);
+        chat.summary = "Chat message".into();
         let snapshot = group(
             [
-                active_chat,
+                chat,
                 notification(1, 1, Some("Mail"), None, true),
-                notification(2, 1, Some("Chat"), None, false),
                 notification(3, 1, Some("Chat"), None, false),
             ]
             .into_iter(),
@@ -221,7 +225,7 @@ mod tests {
         assert_eq!(snapshot.count, 3);
         assert_eq!(snapshot.groups[0].name, "Chat");
         assert_eq!(snapshot.groups[0].notifications.len(), 2);
-        assert_eq!(snapshot.groups[0].notifications[0].summary, "Active");
+        assert_eq!(snapshot.groups[0].notifications[0].summary, "Chat message");
         assert_eq!(snapshot.groups[1].name, "Mail");
     }
 
@@ -252,9 +256,9 @@ mod tests {
         let populated = group([notification(1, 1, None, None, true)].into_iter(), true);
         assert_eq!(populated.alt(), "dnd-notification");
         assert_eq!(populated.tooltip(), "Do Not Disturb — 1 notification(s)");
-        let history_only = group([notification(1, 1, None, None, false)].into_iter(), false);
-        assert_eq!(history_only.alt(), "notification");
-        assert_eq!(history_only.tooltip(), "1 notification(s)");
+        let center_only = group([notification(1, 1, None, None, false)].into_iter(), false);
+        assert_eq!(center_only.alt(), "notification");
+        assert_eq!(center_only.tooltip(), "1 notification(s)");
         assert_eq!(
             Snapshot::unavailable().tooltip(),
             "Notifications unavailable"

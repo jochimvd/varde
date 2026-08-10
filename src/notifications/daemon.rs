@@ -9,7 +9,8 @@ use zbus::{interface, zvariant::OwnedValue};
 use super::{
     image::{self, Thumbnail},
     model::{self, Snapshot},
-    state::{Action, CloseReason, Incoming, Store, Urgency},
+    sound::{Player, Sound},
+    state::{Action, CloseReason, Incoming, Picture, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -40,21 +41,18 @@ impl Control {
         let _ = self.commands.send(Command::Clear);
     }
 
-    pub fn dismiss(&self, id: u32, active: bool) {
-        let command = if active {
-            Command::Dismiss(id)
-        } else {
-            Command::RemoveHistory(id)
-        };
-        let _ = self.commands.send(command);
+    pub fn dismiss(&self, id: u32) {
+        let _ = self.commands.send(Command::Dismiss(id));
     }
 
-    pub fn dismiss_group(&self, notifications: Vec<(u32, bool)>) {
+    pub fn dismiss_group(&self, notifications: Vec<u32>) {
         let _ = self.commands.send(Command::DismissGroup(notifications));
     }
 
-    pub fn invoke_action(&self, id: u32, key: String) {
-        let _ = self.commands.send(Command::InvokeAction(id, key));
+    pub fn invoke_action(&self, id: u32, key: String, activation_token: Option<String>) {
+        let _ = self
+            .commands
+            .send(Command::InvokeAction(id, key, activation_token));
     }
 
     pub fn displayed(&self, notifications: Vec<(u32, u64)>) {
@@ -68,10 +66,9 @@ enum Command {
     ToggleDnd,
     Clear,
     Dismiss(u32),
-    DismissGroup(Vec<(u32, bool)>),
-    InvokeAction(u32, String),
+    DismissGroup(Vec<u32>),
+    InvokeAction(u32, String, Option<String>),
     Displayed(Vec<(u32, u64)>),
-    RemoveHistory(u32),
 }
 
 #[derive(Clone)]
@@ -79,6 +76,7 @@ struct Shared {
     store: Arc<Mutex<Store>>,
     changes: async_channel::Sender<()>,
     commands: mpsc::Sender<Command>,
+    sounds: Option<Player>,
 }
 
 impl Shared {
@@ -102,6 +100,7 @@ pub(super) fn start(changes: async_channel::Sender<()>) -> Option<Control> {
         store,
         changes,
         commands,
+        sounds: Player::start(),
     };
     crate::background::spawn("notification-daemon", move || {
         if let Err(error) = run(shared, receiver) {
@@ -127,7 +126,7 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
             .store
             .lock()
             .expect("notification store poisoned")
-            .next_expiration();
+            .next_popup_deadline();
         let command = match next {
             Some(deadline) => {
                 match commands.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
@@ -137,7 +136,7 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                             .store
                             .lock()
                             .expect("notification store poisoned")
-                            .expire(Instant::now());
+                            .hide_due_popups(Instant::now());
                         emit_closed(&connection, &closed);
                         shared.publish();
                         continue;
@@ -174,7 +173,7 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                     .store
                     .lock()
                     .expect("notification store poisoned")
-                    .close(id, false)
+                    .close(id)
                     .then_some(vec![(id, CloseReason::Dismissed)])
                     .unwrap_or_default();
                 emit_closed(&connection, &closed);
@@ -182,26 +181,22 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
             Command::DismissGroup(notifications) => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
                 let mut closed = Vec::new();
-                for (id, active) in notifications {
-                    if active {
-                        if store.close(id, false) {
-                            closed.push((id, CloseReason::Dismissed));
-                        }
-                    } else {
-                        store.remove_history(id);
+                for id in notifications {
+                    if store.close(id) {
+                        closed.push((id, CloseReason::Dismissed));
                     }
                 }
                 drop(store);
                 emit_closed(&connection, &closed);
             }
-            Command::InvokeAction(id, key) => {
+            Command::InvokeAction(id, key, activation_token) => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
-                let (action_invoked, active_closed) = invoke_action(&mut store, id, &key);
+                let (action_invoked, closed) = invoke_action(&mut store, id, &key);
                 drop(store);
                 if action_invoked {
-                    emit_action(&connection, id, &key);
+                    emit_action(&connection, id, &key, activation_token.as_deref());
                 }
-                if active_closed {
+                if closed {
                     emit_closed(&connection, &[(id, CloseReason::Dismissed)]);
                 }
             }
@@ -213,13 +208,6 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                 }
                 continue;
             }
-            Command::RemoveHistory(id) => {
-                shared
-                    .store
-                    .lock()
-                    .expect("notification store poisoned")
-                    .remove_history(id);
-            }
         }
         shared.publish();
     }
@@ -227,19 +215,20 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
 }
 
 fn invoke_action(store: &mut Store, id: u32, key: &str) -> (bool, bool) {
-    if !store.has_action(id, key) {
-        return (false, false);
+    let resident = store
+        .notifications()
+        .map(|(notification, _)| notification)
+        .find(|notification| notification.id == id)
+        .filter(|notification| notification.actions.iter().any(|action| action.key == key))
+        .map(|notification| notification.resident);
+    match resident {
+        Some(true) => (true, false),
+        Some(false) => {
+            let closed = store.close(id);
+            (closed, closed)
+        }
+        None => (false, false),
     }
-    let active = store.is_active(id);
-    if store.is_resident(id) {
-        return (true, false);
-    }
-    let removed = if active {
-        store.close(id, false)
-    } else {
-        store.remove_history(id)
-    };
-    (removed, active && removed)
 }
 
 fn emit_closed(connection: &zbus::blocking::Connection, closed: &[(u32, CloseReason)]) {
@@ -254,7 +243,21 @@ fn emit_closed(connection: &zbus::blocking::Connection, closed: &[(u32, CloseRea
     }
 }
 
-fn emit_action(connection: &zbus::blocking::Connection, id: u32, action: &str) {
+fn emit_action(
+    connection: &zbus::blocking::Connection,
+    id: u32,
+    action: &str,
+    activation_token: Option<&str>,
+) {
+    if let Some(token) = activation_token.filter(|token| !token.is_empty()) {
+        let _ = connection.emit_signal(
+            None::<&str>,
+            PATH,
+            INTERFACE,
+            "ActivationToken",
+            &(id, token),
+        );
+    }
     let _ = connection.emit_signal(
         None::<&str>,
         PATH,
@@ -270,13 +273,18 @@ struct Notifications(Shared);
 impl Notifications {
     #[zbus(name = "GetCapabilities")]
     fn get_capabilities(&self) -> Vec<&str> {
-        vec![
+        let mut capabilities = vec![
             "actions",
             "body",
+            "icon-static",
             "persistence",
             "x-canonical-private-synchronous",
             "x-dunst-stack-tag",
-        ]
+        ];
+        if self.0.sounds.is_some() {
+            capabilities.push("sound");
+        }
+        capabilities
     }
 
     #[zbus(name = "Notify")]
@@ -292,12 +300,12 @@ impl Notifications {
         hints: HashMap<String, OwnedValue>,
         expire_timeout: i32,
     ) -> u32 {
-        let thumbnail = thumbnail_hint(&hints);
+        let sound = sound_hint(&hints);
         let incoming = Incoming {
             replaces_id,
             app_name: truncate_utf8(app_name, MAX_TEXT_BYTES),
             app_icon: truncate_utf8(app_icon, MAX_TEXT_BYTES),
-            thumbnail,
+            picture: picture_hint(&hints),
             progress: progress_hint(&hints),
             summary: truncate_utf8(summary, MAX_TEXT_BYTES),
             body: truncate_utf8(body, MAX_BODY_BYTES),
@@ -312,14 +320,18 @@ impl Notifications {
                 .unwrap_or_default(),
             transient: bool_hint(&hints, "transient"),
             resident: bool_hint(&hints, "resident"),
-            timeout_ms: expire_timeout,
+            popup_timeout_ms: expire_timeout,
         };
-        let (id, evicted) = self
-            .0
-            .store
-            .lock()
-            .expect("notification store poisoned")
-            .notify_with_eviction(incoming);
+        let mut store = self.0.store.lock().expect("notification store poisoned");
+        let play_sound = !store.dnd();
+        let (id, evicted) = store.notify_with_eviction(incoming);
+        drop(store);
+        if play_sound
+            && let Some(sound) = sound
+            && let Some(player) = &self.0.sounds
+        {
+            player.play(sound);
+        }
         self.0.publish();
         if let Some((id, reason)) = evicted {
             let _ = self.0.commands.send(Command::EmitClosed(id, reason));
@@ -340,7 +352,7 @@ impl Notifications {
             .store
             .lock()
             .expect("notification store poisoned")
-            .close(id, false);
+            .close(id);
         if !closed {
             return Err(zbus::fdo::Error::InvalidArgs(format!(
                 "unknown notification ID {id}"
@@ -362,7 +374,7 @@ impl Notifications {
 
     #[zbus(name = "GetServerInformation")]
     fn get_server_information(&self) -> (&str, &str, &str, &str) {
-        ("Varde", "Varde", env!("CARGO_PKG_VERSION"), "1.2")
+        ("Varde", "Varde", env!("CARGO_PKG_VERSION"), "1.3")
     }
 
     #[zbus(signal, name = "NotificationClosed")]
@@ -377,6 +389,13 @@ impl Notifications {
         emitter: &zbus::object_server::SignalEmitter<'_>,
         id: u32,
         action: &str,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal, name = "ActivationToken")]
+    async fn activation_token(
+        emitter: &zbus::object_server::SignalEmitter<'_>,
+        id: u32,
+        activation_token: &str,
     ) -> zbus::Result<()>;
 }
 
@@ -420,6 +439,22 @@ fn bool_hint(hints: &HashMap<String, OwnedValue>, name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn sound_hint(hints: &HashMap<String, OwnedValue>) -> Option<Sound> {
+    if bool_hint(hints, "suppress-sound") {
+        return None;
+    }
+    if let Some(path) = string_hint(hints, "sound-file")
+        .filter(|path| path.len() <= MAX_TEXT_BYTES)
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_absolute() && path.is_file())
+    {
+        return Some(Sound::File(path));
+    }
+    string_hint(hints, "sound-name")
+        .filter(|name| name.len() <= MAX_TEXT_BYTES)
+        .map(Sound::Name)
+}
+
 fn progress_hint(hints: &HashMap<String, OwnedValue>) -> Option<u8> {
     let value = hints.get("value")?;
     let value = i32::try_from(value)
@@ -434,19 +469,36 @@ fn progress_hint(hints: &HashMap<String, OwnedValue>) -> Option<u8> {
 }
 
 fn image_hint(hints: &HashMap<String, OwnedValue>) -> Option<Thumbnail> {
-    ["image-data", "image_data", "icon_data"]
+    ["image-data", "image_data"]
         .into_iter()
         .find_map(|name| hints.get(name).and_then(image_data))
 }
 
-fn thumbnail_hint(hints: &HashMap<String, OwnedValue>) -> Option<Thumbnail> {
-    image_hint(hints).or_else(|| {
-        ["image-path", "image_path"].into_iter().find_map(|name| {
-            string_hint(hints, name)
-                .filter(|path| path.len() <= MAX_TEXT_BYTES)
-                .and_then(|path| image::from_path(&path))
+fn picture_hint(hints: &HashMap<String, OwnedValue>) -> Option<Picture> {
+    image_hint(hints)
+        .map(Picture::Pixels)
+        .or_else(|| {
+            ["image-path", "image_path"]
+                .into_iter()
+                .find_map(|name| string_hint(hints, name).and_then(picture_path))
         })
-    })
+        .or_else(|| {
+            hints
+                .get("icon_data")
+                .and_then(image_data)
+                .map(Picture::Pixels)
+        })
+}
+
+fn picture_path(value: String) -> Option<Picture> {
+    if value.len() > MAX_TEXT_BYTES {
+        return None;
+    }
+    if value.starts_with("file://") || std::path::Path::new(&value).is_absolute() {
+        image::from_path(&value).map(Picture::Pixels)
+    } else {
+        Some(Picture::Themed(value))
+    }
 }
 
 fn image_data(value: &OwnedValue) -> Option<Thumbnail> {
@@ -509,8 +561,12 @@ mod tests {
         });
 
         assert_eq!(invoke_action(&mut store, id, "reply"), (true, false));
-        assert!(store.is_active(id));
-        assert!(store.close(id, false));
+        assert!(
+            store
+                .notifications()
+                .any(|(notification, _)| notification.id == id)
+        );
+        assert!(store.close(id));
     }
 
     #[test]
@@ -525,7 +581,11 @@ mod tests {
         });
 
         assert_eq!(invoke_action(&mut store, id, "default"), (true, true));
-        assert!(!store.is_active(id));
+        assert!(
+            !store
+                .notifications()
+                .any(|(notification, _)| notification.id == id)
+        );
     }
 
     #[test]
@@ -534,23 +594,38 @@ mod tests {
         let id = store.notify(Incoming::default());
 
         assert_eq!(invoke_action(&mut store, id, "default"), (false, false));
-        assert!(store.is_active(id));
+        assert!(
+            store
+                .notifications()
+                .any(|(notification, _)| notification.id == id)
+        );
     }
 
     #[test]
-    fn history_actions_remove_only_the_history_entry() {
+    fn actions_remain_active_after_the_popup_timeout() {
+        let now = Instant::now();
         let mut store = Store::default();
         let id = store.notify(Incoming {
             actions: vec![Action {
                 key: "archive".into(),
                 label: "Archive".into(),
             }],
+            popup_timeout_ms: 25,
             ..Incoming::default()
         });
-        assert!(store.close(id, true));
+        assert!(store.displayed(id, 1, now));
+        assert!(
+            store
+                .hide_due_popups(now + std::time::Duration::from_millis(25))
+                .is_empty()
+        );
 
-        assert_eq!(invoke_action(&mut store, id, "archive"), (true, false));
-        assert!(!store.has_action(id, "archive"));
+        assert_eq!(invoke_action(&mut store, id, "archive"), (true, true));
+        assert!(
+            !store
+                .notifications()
+                .any(|(notification, _)| notification.id == id)
+        );
     }
 
     #[test]
@@ -676,6 +751,13 @@ mod tests {
         .unwrap()
     }
 
+    fn picture_thumbnail(hints: &HashMap<String, OwnedValue>) -> Thumbnail {
+        match picture_hint(hints).unwrap() {
+            Picture::Pixels(thumbnail) => thumbnail,
+            Picture::Themed(icon) => panic!("expected thumbnail, got icon {icon}"),
+        }
+    }
+
     #[test]
     fn accepts_standard_raw_images_and_hint_aliases() {
         for name in ["image-data", "image_data", "icon_data"] {
@@ -683,7 +765,7 @@ mod tests {
                 name.into(),
                 raw_image_value(2, 1, 8, true, 8, 4, vec![0; 8]),
             )]);
-            let image = image_hint(&hints).unwrap();
+            let image = picture_thumbnail(&hints);
             assert_eq!((image.width, image.height, image.rowstride), (2, 1, 8));
             assert_eq!(image.bytes.len(), 8);
         }
@@ -730,11 +812,42 @@ mod tests {
                 OwnedValue::from(zbus::zvariant::Str::from(path.to_str().unwrap())),
             ),
         ]);
+        assert_eq!(picture_thumbnail(&hints).bytes.as_ref(), &[9, 8, 7, 6]);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn image_paths_take_priority_over_deprecated_icon_data() {
+        let path = png(1, 1, 0x112233ff);
+        let hints = HashMap::from([
+            (
+                "image-path".into(),
+                OwnedValue::from(zbus::zvariant::Str::from(path.to_str().unwrap())),
+            ),
+            (
+                "icon_data".into(),
+                raw_image_value(1, 1, 4, true, 8, 4, vec![9, 8, 7, 6]),
+            ),
+        ]);
+
         assert_eq!(
-            thumbnail_hint(&hints).unwrap().bytes.as_ref(),
-            &[9, 8, 7, 6]
+            picture_thumbnail(&hints).bytes.as_ref(),
+            &[0x11, 0x22, 0x33, 0xff]
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn accepts_themed_image_path_names() {
+        let hints = HashMap::from([(
+            "image-path".into(),
+            OwnedValue::from(zbus::zvariant::Str::from("dialog-information")),
+        )]);
+
+        assert_eq!(
+            picture_hint(&hints),
+            Some(Picture::Themed("dialog-information".into()))
+        );
     }
 
     #[test]
@@ -755,7 +868,7 @@ mod tests {
             ),
         ]);
         assert_eq!(
-            thumbnail_hint(&hints).unwrap().bytes.as_ref(),
+            picture_thumbnail(&hints).bytes.as_ref(),
             &[0x11, 0x22, 0x33, 0xff]
         );
         fs::remove_file(path).unwrap();
@@ -767,7 +880,7 @@ mod tests {
             "image-path".into(),
             OwnedValue::from(zbus::zvariant::Str::from("x".repeat(MAX_TEXT_BYTES + 1))),
         )]);
-        assert!(thumbnail_hint(&hints).is_none());
+        assert!(picture_hint(&hints).is_none());
     }
 
     #[test]
@@ -783,6 +896,44 @@ mod tests {
             ),
         ]);
         assert_eq!(image_hint(&hints).unwrap().bytes.as_ref(), &[2; 4]);
+    }
+
+    #[test]
+    fn selects_and_suppresses_notification_sounds() {
+        let path = png(1, 1, 0x112233ff);
+        let file = OwnedValue::from(zbus::zvariant::Str::from(path.to_str().unwrap()));
+        let name = || OwnedValue::from(zbus::zvariant::Str::from("message-new-instant"));
+
+        assert_eq!(
+            sound_hint(&HashMap::from([("sound-name".into(), name())])),
+            Some(Sound::Name("message-new-instant".into()))
+        );
+        assert_eq!(
+            sound_hint(&HashMap::from([
+                ("sound-file".into(), file.try_clone().unwrap()),
+                ("sound-name".into(), name()),
+            ])),
+            Some(Sound::File(path.clone()))
+        );
+        assert_eq!(
+            sound_hint(&HashMap::from([
+                ("sound-name".into(), name()),
+                ("suppress-sound".into(), OwnedValue::from(true)),
+            ])),
+            None
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_relative_and_missing_sound_files() {
+        for path in ["relative.oga", "/missing/notification.oga"] {
+            let hints = HashMap::from([(
+                "sound-file".into(),
+                OwnedValue::from(zbus::zvariant::Str::from(path)),
+            )]);
+            assert_eq!(sound_hint(&hints), None);
+        }
     }
 
     #[test]
