@@ -72,7 +72,6 @@ struct Stored {
     notification: Notification,
     tag: String,
     transient: bool,
-    popup_timeout: Option<Duration>,
     popup_deadline: Option<Instant>,
     show_popup: bool,
 }
@@ -104,7 +103,9 @@ impl Store {
             .map(|index| self.notifications[index].notification.id)
             .unwrap_or_else(|| self.allocate_id());
         let revision = self.allocate_revision();
-        let popup_timeout = popup_timeout(incoming.urgency);
+        let popup_deadline = (incoming.urgency != Urgency::Critical)
+            .then(|| replacement.and_then(|index| self.notifications[index].popup_deadline))
+            .flatten();
         let show_popup = replacement
             .map(|index| self.notifications[index].show_popup)
             .unwrap_or(true);
@@ -126,10 +127,7 @@ impl Store {
             },
             tag: incoming.tag,
             transient: incoming.transient,
-            popup_timeout,
-            popup_deadline: popup_timeout.and_then(|_| {
-                replacement.and_then(|index| self.notifications[index].popup_deadline)
-            }),
+            popup_deadline,
             show_popup,
         };
 
@@ -181,9 +179,9 @@ impl Store {
         }) else {
             return false;
         };
-        stored.popup_deadline = stored
-            .popup_timeout
-            .and_then(|timeout| now.checked_add(timeout));
+        stored.popup_deadline = (stored.notification.urgency != Urgency::Critical)
+            .then(|| now.checked_add(POPUP_TIMEOUT))
+            .flatten();
         true
     }
 
@@ -269,13 +267,6 @@ impl Store {
             self.next_revision = 1;
         }
         self.next_revision
-    }
-}
-
-fn popup_timeout(urgency: Urgency) -> Option<Duration> {
-    match urgency {
-        Urgency::Low | Urgency::Normal => Some(POPUP_TIMEOUT),
-        Urgency::Critical => None,
     }
 }
 

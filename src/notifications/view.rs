@@ -98,6 +98,27 @@ mod tests {
     }
 
     #[test]
+    fn opening_the_center_consumes_visible_popups_then_shows_the_next_batch() {
+        let notifications = (1..=MAX_POPUPS as u32 * 2)
+            .rev()
+            .map(|id| (id, u64::from(id)))
+            .collect::<Vec<_>>();
+        let snapshot = super::super::model::test_snapshot(&notifications);
+        let mut state = PopupState::default();
+
+        assert_eq!(
+            state.update(&snapshot, false),
+            vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+        );
+        assert!(state.update(&snapshot, true).is_empty());
+        assert!(state.visible.is_empty());
+        assert_eq!(
+            state.update(&snapshot, false),
+            vec![(6, 6), (7, 7), (8, 8), (9, 9), (10, 10)]
+        );
+    }
+
+    #[test]
     fn popup_queue_reveals_oldest_undisplayed_notifications_first() {
         let notifications = (1..=10)
             .rev()
