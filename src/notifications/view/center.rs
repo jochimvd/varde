@@ -413,28 +413,12 @@ impl GroupView {
         if interactive {
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
-            let pressed_notifications = Rc::new(RefCell::new(None));
             dismiss.connect_pressed({
                 let notifications = Rc::clone(&notifications);
-                let pressed_notifications = Rc::clone(&pressed_notifications);
-                move |_, _, _, _| {
-                    pressed_notifications.replace(Some(notifications.borrow().clone()));
-                }
-            });
-            dismiss.connect_released({
-                let header = header.clone();
                 let manager = manager.clone();
-                let notifications = Rc::clone(&notifications);
-                let pressed_notifications = Rc::clone(&pressed_notifications);
-                move |_, _, x, y| {
-                    let target = pressed_notifications
-                        .borrow_mut()
-                        .take()
-                        .unwrap_or_else(|| notifications.borrow().clone());
-                    if header.contains(x, y)
-                        && let Some(manager) = manager.upgrade()
-                    {
-                        manager.dismiss_group(target);
+                move |_, _, _, _| {
+                    if let Some(manager) = manager.upgrade() {
+                        manager.dismiss_group(notifications.borrow().clone());
                     }
                 }
             });
@@ -662,49 +646,29 @@ impl RowView {
             }
         });
         if interactive {
-            let pressed_id = Rc::new(Cell::new(None));
             let activate = gtk::GestureClick::new();
             activate.set_button(1);
             activate.connect_pressed({
-                let target = Rc::clone(&target);
-                let pressed_id = Rc::clone(&pressed_id);
-                move |_, _, _, _| pressed_id.set(Some(target.get().0))
-            });
-            activate.connect_released({
-                let surface = surface.clone();
                 let manager = manager.clone();
                 let target = Rc::clone(&target);
                 let has_default = Rc::clone(&has_default);
-                let pressed_id = Rc::clone(&pressed_id);
-                move |_, _, x, y| {
-                    if surface.contains(x, y)
-                        && has_default.get()
+                move |_, _, _, _| {
+                    if has_default.get()
                         && let Some(manager) = manager.upgrade()
                     {
-                        let id = pressed_id.take().unwrap_or_else(|| target.get().0);
-                        manager.invoke_action(id, "default");
+                        manager.invoke_action(target.get().0, "default");
                     }
                 }
             });
-            surface.add_controller(activate);
+            content.add_controller(activate);
             let dismiss = gtk::GestureClick::new();
             dismiss.set_button(3);
-            let pressed_target = Rc::new(Cell::new(None));
             dismiss.connect_pressed({
-                let target = Rc::clone(&target);
-                let pressed_target = Rc::clone(&pressed_target);
-                move |_, _, _, _| pressed_target.set(Some(target.get()))
-            });
-            dismiss.connect_released({
-                let container = container.clone();
                 let manager = manager.clone();
                 let target = Rc::clone(&target);
-                let pressed_target = Rc::clone(&pressed_target);
-                move |_, _, x, y| {
-                    let (id, active) = pressed_target.take().unwrap_or_else(|| target.get());
-                    if container.contains(x, y)
-                        && let Some(manager) = manager.upgrade()
-                    {
+                move |_, _, _, _| {
+                    if let Some(manager) = manager.upgrade() {
+                        let (id, active) = target.get();
                         manager.dismiss(id, active);
                     }
                 }
