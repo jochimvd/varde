@@ -49,11 +49,32 @@ fn notification_icon(icon: &str) -> gio::Icon {
 }
 
 pub(super) fn notification_time(timestamp: Option<i64>) -> Option<String> {
-    glib::DateTime::from_unix_local(timestamp?)
-        .ok()?
-        .format("%H:%M")
-        .ok()
-        .map(|time| time.to_string())
+    let now = glib::DateTime::now_local().ok()?;
+    format_notification_time(timestamp?, &now)
+}
+
+fn format_notification_time(timestamp: i64, now: &glib::DateTime) -> Option<String> {
+    let received = glib::DateTime::from_unix_local(timestamp).ok()?;
+    let time = received.format("%H:%M").ok()?;
+    if received.ymd() == now.ymd() {
+        return Some(time.to_string());
+    }
+    if received.ymd() == now.add_days(-1).ok()?.ymd() {
+        return Some(format!("Yesterday · {time}"));
+    }
+    if (2..now.day_of_week()).any(|days| {
+        now.add_days(-days)
+            .is_ok_and(|date| received.ymd() == date.ymd())
+    }) {
+        let weekday = received.format("%a").ok()?;
+        return Some(format!("{weekday} · {time}"));
+    }
+    let date = received.format("%-d %b").ok()?;
+    if received.year() == now.year() {
+        Some(format!("{date} · {time}"))
+    } else {
+        Some(format!("{date} {} · {time}", received.year()))
+    }
 }
 
 fn desktop_info(id: &str) -> Option<gio::DesktopAppInfo> {
@@ -68,4 +89,26 @@ pub(super) fn message(text: &str, class: &str) -> gtk::Label {
     let label = gtk::Label::builder().label(text).xalign(0.0).build();
     label.add_css_class(class);
     label
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local(year: i32, month: i32, day: i32, hour: i32, minute: i32) -> glib::DateTime {
+        glib::DateTime::from_local(year, month, day, hour, minute, 0.0).unwrap()
+    }
+
+    #[test]
+    fn formats_notification_times_by_calendar_distance() {
+        let now = local(2026, 8, 13, 18, 0);
+        let format = |date: glib::DateTime| format_notification_time(date.to_unix(), &now).unwrap();
+
+        assert_eq!(format(local(2026, 8, 13, 9, 15)), "09:15");
+        assert_eq!(format(local(2026, 8, 12, 23, 45)), "Yesterday · 23:45");
+        assert_eq!(format(local(2026, 8, 10, 8, 5)), "Mon · 08:05");
+        assert_eq!(format(local(2026, 8, 9, 8, 5)), "9 Aug · 08:05");
+        assert_eq!(format(local(2026, 1, 3, 8, 5)), "3 Jan · 08:05");
+        assert_eq!(format(local(2025, 12, 3, 8, 5)), "3 Dec 2025 · 08:05");
+    }
 }
