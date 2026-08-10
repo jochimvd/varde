@@ -230,6 +230,17 @@ notify \
     'Same application and stack tag. Expect the 25% notification to be replaced in place.' \
     '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" 0
 
+next 'Send ten notifications to test popup batching and center consumption'
+printf '\nExpected: QUEUE 01-05 appear first. Open the notification center before their five-second timers finish, then close it. QUEUE 06-10 should appear and receive fresh five-second timers.\n'
+for index in {1..10}; do
+    printf -v summary '[QUEUE %02d/10] Popup batching test' "$index"
+    notify \
+        'Popup Queue Tests' 0 'view-list-symbolic' \
+        "$summary" \
+        'Only five notifications may be visible. Opening the center consumes the visible batch without consuming queued notifications.' \
+        '[]' "{'urgency': <byte 1>}" -1
+done
+
 printf '\nAll test steps have run. No cleanup was performed.\n'
 printf 'Press Enter to close this terminal...'
 IFS= read -r _ || true
