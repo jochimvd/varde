@@ -100,40 +100,55 @@ fn update_date(label: &gtk::Label, alternate: bool) {
 }
 
 fn calendar_popover(label: &gtk::Label) -> gtk::Popover {
-    let calendar = gtk::Calendar::new();
-    calendar.set_show_day_names(true);
-    calendar.set_show_heading(true);
-    calendar.set_show_week_numbers(false);
-
     let stats = gtk::Label::builder()
         .width_chars(CALENDAR_STATS_WIDTH)
         .xalign(0.0)
         .build();
     stats.add_css_class("calendar-stats");
-    update_calendar_stats(&calendar.date(), &stats);
-    calendar.connect_day_selected({
-        let stats = stats.clone();
-        move |calendar| update_calendar_stats(&calendar.date(), &stats)
-    });
+    let calendar = Rc::new(RefCell::new(new_calendar(&stats)));
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 4);
     content.add_css_class("bar-popover-panel");
     content.add_css_class("date-calendar");
-    content.append(&calendar);
+    content.append(&*calendar.borrow());
     content.append(&stats);
 
     let popover = module_popover(label, &content);
     popover.add_css_class("date-popover");
     popover.connect_visible_notify({
         let calendar = calendar.clone();
-        let stats = stats.clone();
         move |popover| {
             if popover.is_visible() {
-                update_calendar_stats(&calendar.date(), &stats);
+                let today = glib::DateTime::now_local().expect("local time is available");
+                calendar.borrow().select_day(&today);
             }
         }
     });
+    popover.connect_closed({
+        let calendar = calendar.clone();
+        let content = content.clone();
+        let stats = stats.clone();
+        move |_| {
+            content.remove(&*calendar.borrow());
+            let next = new_calendar(&stats);
+            content.prepend(&next);
+            calendar.replace(next);
+        }
+    });
     popover
+}
+
+fn new_calendar(stats: &gtk::Label) -> gtk::Calendar {
+    let calendar = gtk::Calendar::new();
+    calendar.set_show_day_names(true);
+    calendar.set_show_heading(true);
+    calendar.set_show_week_numbers(false);
+    update_calendar_stats(&calendar.date(), stats);
+    calendar.connect_day_selected({
+        let stats = stats.clone();
+        move |calendar| update_calendar_stats(&calendar.date(), &stats)
+    });
+    calendar
 }
 
 struct WorldClockRow {
