@@ -44,9 +44,11 @@ impl HoverIntent {
     }
 
     pub(super) fn retract(&self, action: impl FnOnce() + 'static) {
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
         let state = self.clone();
         gtk::glib::timeout_add_local_once(RETRACT_DELAY, move || {
-            if !state.hovered.get() {
+            if !state.hovered.get() && state.generation.get() == generation {
                 action();
             }
         });
