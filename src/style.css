@@ -119,6 +119,118 @@ button {
     font-weight: bold;
 }
 
+popover.bar-popover,
+popover.notifications {
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    font-size: 14px;
+    color: @primary_color;
+    background: transparent;
+}
+
+popover.bar-popover > contents,
+popover.notifications > contents {
+    padding: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+}
+
+.bar-popover-panel,
+.notification-center {
+    padding: 8px;
+    border: 1px solid @overlay_strong_color;
+    border-radius: 8px;
+    background: @surface_color;
+}
+
+.world-clock-title {
+    padding: 2px;
+    font-weight: bold;
+}
+
+.world-clock-grid {
+    padding: 2px;
+}
+
+.world-clock-name,
+.world-clock-day,
+.world-clock-offset {
+    color: @text_muted_color;
+}
+
+.world-clock-day.today {
+    color: @accent_color;
+}
+
+.world-clock-time {
+    font-weight: bold;
+}
+
+.world-clock-time.primary {
+    color: @accent_color;
+}
+
+popover.date-popover calendar {
+    border: none;
+    color: @primary_color;
+    background: transparent;
+}
+
+popover.date-popover calendar header {
+    border: none;
+    background: transparent;
+}
+
+popover.date-popover calendar button {
+    min-width: 24px;
+    min-height: 24px;
+    border-radius: 5px;
+    color: @text_secondary_color;
+}
+
+popover.date-popover calendar button:hover,
+popover.date-popover calendar .day-number:hover {
+    background: @overlay_subtle_color;
+}
+
+popover.date-popover calendar .day-name {
+    color: @text_muted_color;
+    font-weight: bold;
+}
+
+popover.date-popover calendar .other-month {
+    color: @tertiary_color;
+}
+
+popover.date-popover calendar .today {
+    color: @accent_color;
+    font-weight: bold;
+    box-shadow: none;
+}
+
+popover.date-popover calendar .day-number:selected {
+    border-radius: 5px;
+    color: @surface_color;
+    background: @accent_color;
+}
+
+popover.date-popover calendar .day-number:focus,
+popover.date-popover calendar .day-number:focus-visible {
+    outline-color: alpha(@accent_color, 0.65);
+}
+
+popover.date-popover calendar .day-number:selected:focus,
+popover.date-popover calendar .day-number:selected:focus-visible {
+    outline: none;
+}
+
+popover.bar-popover .calendar-stats {
+    margin-top: 4px;
+    padding: 8px 2px 2px;
+    border-top: 1px solid @overlay_strong_color;
+    color: @text_muted_color;
+}
+
 .module,
 .cpu,
 .memory,
@@ -308,20 +420,6 @@ window.launcher scrollbar {
     opacity: 0;
 }
 
-popover.notifications {
-    font-family: 'JetBrainsMono Nerd Font Propo';
-    font-size: 14px;
-    color: @primary_color;
-    background: transparent;
-}
-
-popover.notifications > contents {
-    padding: 0;
-    border: none;
-    box-shadow: none;
-    background: transparent;
-}
-
 window.notification-popups {
     font-family: 'JetBrainsMono Nerd Font Propo';
     font-size: 14px;
@@ -373,13 +471,6 @@ window.notification-popups {
     min-height: 4px;
     border-radius: 2px;
     background: @accent_color;
-}
-
-.notification-center {
-    padding: 8px;
-    border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
-    background: @surface_color;
 }
 
 .notification-center-header {
