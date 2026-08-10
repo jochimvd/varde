@@ -214,8 +214,11 @@ popover.date-popover calendar .day-number:selected {
     background: @accent_color;
 }
 
+popover.date-popover calendar button:focus,
+popover.date-popover calendar button:focus-visible,
 popover.date-popover calendar .day-number:focus,
 popover.date-popover calendar .day-number:focus-visible {
+    border-radius: 5px;
     outline-color: alpha(@accent_color, 0.65);
 }
 
