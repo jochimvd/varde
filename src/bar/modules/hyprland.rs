@@ -116,6 +116,7 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &
 
     for workspace in &state.workspaces {
         let button = gtk::Button::with_label(&workspace.name);
+        button.set_cursor_from_name(Some("pointer"));
         if state.active_id == Some(workspace.id) {
             button.add_css_class("active");
         }

@@ -8,6 +8,7 @@ pub fn widget() -> gtk::Button {
         .focusable(false)
         .valign(gtk::Align::Center)
         .build();
+    button.set_cursor_from_name(Some("pointer"));
     button.set_widget_name("idle_inhibitor");
     button.add_css_class("module");
     button.add_css_class("idle-inhibitor");

@@ -106,6 +106,7 @@ fn update_memory(label: &gtk::Label) {
 }
 
 fn launch_btop_on_click(label: &gtk::Label) {
+    label.set_cursor_from_name(Some("pointer"));
     let click = gtk::GestureClick::new();
     click.connect_released(|_, _, _, _| {
         background::spawn("btop-launch", || {
