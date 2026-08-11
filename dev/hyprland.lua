@@ -11,17 +11,30 @@ hl.config({
     },
     ecosystem = {
         enforce_permissions = true,
+        no_donation_nag = true,
+        no_update_news = true,
     },
     general = {
-        border_size = 0,
-        gaps_in = 0,
-        gaps_out = 0,
+        border_size = 2,
+        gaps_in = 4,
+        gaps_out = 8,
+        col = {
+            active_border = "rgba(FFFFFFee)",
+            inactive_border = "rgba(595959ee)",
+        },
+    },
+    decoration = {
+        rounding = 5,
+        shadow = {
+            enabled = false,
+        },
     },
     misc = {
         background_color = "rgb(303545)",
         disable_hyprland_logo = true,
         disable_splash_rendering = true,
         disable_watchdog_warning = true,
+        focus_on_activate = true,
         force_default_wallpaper = 0,
     },
 })
