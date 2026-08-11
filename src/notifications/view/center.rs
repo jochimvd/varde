@@ -244,7 +244,9 @@ impl Center {
     }
 
     pub fn hide(&self) {
+        self.popover.set_autohide(false);
         self.popover.popdown();
+        self.popover.set_autohide(true);
     }
 
     pub fn is_visible(&self) -> bool {
