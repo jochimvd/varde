@@ -645,6 +645,7 @@ impl RowView {
                             "default",
                             gesture.widget().as_ref().and_then(activation_token),
                         );
+                        manager.close();
                     }
                 }
             });
@@ -753,6 +754,7 @@ impl RowView {
                 move |button| {
                     if let Some(manager) = manager.upgrade() {
                         manager.invoke_action(id, &key, activation_token(button));
+                        manager.close();
                     }
                 }
             });
