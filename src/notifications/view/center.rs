@@ -34,12 +34,14 @@ pub(in crate::notifications) struct Center {
     dnd: gtk::Button,
     clear: gtk::Button,
     collapsed: Rc<RefCell<HashSet<String>>>,
+    close_on_release: Rc<Cell<bool>>,
     manager: std::rc::Weak<Manager>,
     interactive: bool,
 }
 
 impl Center {
     pub fn new(anchor: &gtk::ApplicationWindow, manager: &Rc<Manager>, interactive: bool) -> Self {
+        let close_on_release = Rc::new(Cell::new(false));
         let popover = gtk::Popover::builder()
             .autohide(true)
             .has_arrow(false)
@@ -51,7 +53,9 @@ impl Center {
         popover.set_parent(anchor);
         popover.connect_closed({
             let manager = Rc::downgrade(manager);
+            let close_on_release = Rc::clone(&close_on_release);
             move |_| {
+                close_on_release.set(false);
                 if let Some(manager) = manager.upgrade() {
                     manager.center_closed();
                 }
@@ -147,6 +151,26 @@ impl Center {
             }
         });
         popover.add_controller(keys);
+        let pointer = gtk::EventControllerLegacy::builder()
+            .propagation_phase(gtk::PropagationPhase::Capture)
+            .build();
+        pointer.connect_event({
+            let manager = Rc::downgrade(manager);
+            let close_on_release = Rc::clone(&close_on_release);
+            move |_, event| {
+                if event.event_type() == gdk::EventType::ButtonRelease
+                    && event
+                        .downcast_ref::<gdk::ButtonEvent>()
+                        .is_some_and(|event| event.button() == 1)
+                    && close_on_release.replace(false)
+                    && let Some(manager) = manager.upgrade()
+                {
+                    manager.close();
+                }
+                glib::Propagation::Proceed
+            }
+        });
+        popover.add_controller(pointer);
 
         Self {
             popover,
@@ -157,6 +181,7 @@ impl Center {
             dnd,
             clear,
             collapsed,
+            close_on_release,
             manager: Rc::downgrade(manager),
             interactive,
         }
@@ -196,6 +221,7 @@ impl Center {
                     let view = GroupView::new(
                         group.key.clone(),
                         &self.collapsed,
+                        &self.close_on_release,
                         &self.popover,
                         &self.manager,
                         self.interactive,
@@ -317,6 +343,7 @@ struct GroupView {
     key: String,
     notifications: Rc<RefCell<Vec<u32>>>,
     collapsed: Rc<RefCell<HashSet<String>>>,
+    close_on_release: Rc<Cell<bool>>,
     manager: std::rc::Weak<Manager>,
     popover: gtk::Popover,
     interactive: bool,
@@ -326,6 +353,7 @@ impl GroupView {
     fn new(
         key: String,
         collapsed: &Rc<RefCell<HashSet<String>>>,
+        close_on_release: &Rc<Cell<bool>>,
         popover: &gtk::Popover,
         manager: &std::rc::Weak<Manager>,
         interactive: bool,
@@ -426,6 +454,7 @@ impl GroupView {
             key,
             notifications,
             collapsed: Rc::clone(collapsed),
+            close_on_release: Rc::clone(close_on_release),
             manager: manager.clone(),
             popover: popover.clone(),
             interactive,
@@ -462,7 +491,12 @@ impl GroupView {
                 .position(|view| view.identity.get() == identity)
                 .map(|index| available.remove(index))
                 .unwrap_or_else(|| {
-                    let view = RowView::new(&self.manager, &self.popover, self.interactive);
+                    let view = RowView::new(
+                        &self.manager,
+                        &self.close_on_release,
+                        &self.popover,
+                        self.interactive,
+                    );
                     self.rows.append(&view.container);
                     view
                 });
@@ -512,7 +546,12 @@ struct RowView {
 }
 
 impl RowView {
-    fn new(manager: &std::rc::Weak<Manager>, popover: &gtk::Popover, interactive: bool) -> Self {
+    fn new(
+        manager: &std::rc::Weak<Manager>,
+        close_on_release: &Rc<Cell<bool>>,
+        popover: &gtk::Popover,
+        interactive: bool,
+    ) -> Self {
         let text = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .hexpand(true)
@@ -636,16 +675,17 @@ impl RowView {
                 let manager = manager.clone();
                 let target = Rc::clone(&target);
                 let has_default = Rc::clone(&has_default);
+                let close_on_release = Rc::clone(close_on_release);
                 move |gesture, _, _, _| {
                     if has_default.get()
                         && let Some(manager) = manager.upgrade()
                     {
+                        close_on_release.set(true);
                         manager.invoke_action(
                             target.get(),
                             "default",
                             gesture.widget().as_ref().and_then(activation_token),
                         );
-                        manager.close();
                     }
                 }
             });
