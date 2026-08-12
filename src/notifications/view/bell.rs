@@ -100,6 +100,7 @@ impl Bell {
     }
 }
 
+#[allow(deprecated)]
 fn draw_icon(
     icon: &gtk::DrawingArea,
     context: &cairo::Context,

@@ -508,9 +508,31 @@ window.notification-popups {
     padding: 0;
 }
 
-.notification-group {
-    border-radius: 6px;
+listview.notification-center-list,
+listview.notification-center-list > row {
+    padding: 0;
+    background: transparent;
+}
+
+.notification-center-item {
     background: @overlay_subtle_color;
+}
+
+.notification-center-item.notification-group-start {
+    margin-top: 8px;
+    border-radius: 6px 6px 0 0;
+}
+
+.notification-center-item.notification-group-collapsed {
+    border-radius: 6px;
+}
+
+listview.notification-center-list > row:first-child .notification-group-start {
+    margin-top: 0;
+}
+
+.notification-center-item.notification-group-end {
+    border-radius: 0 0 6px 6px;
 }
 
 .notification-group-header {
@@ -572,6 +594,10 @@ window.notification-popups {
 
 .notification-row.critical {
     border-left: 2px solid @critical_color;
+}
+
+.notification-center-item.notification-group-end .notification-row.critical {
+    border-bottom-left-radius: 6px;
 }
 
 .notification-summary {
