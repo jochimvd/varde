@@ -52,6 +52,7 @@ impl GroupView {
         let icon = gtk::Stack::builder()
             .width_request(ICON_SIZE)
             .height_request(ICON_SIZE)
+            .valign(gtk::Align::Center)
             .build();
         icon.add_named(&image, Some("image"));
         icon.add_named(&fallback, Some("fallback"));
