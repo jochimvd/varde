@@ -93,6 +93,7 @@ fn handle_command_line(
             launcher.close();
             notifications.toggle();
         }
+        command::Request::ClearNotifications => notifications.clear(),
         command::Request::Dmenu { prompt } => {
             notifications.close();
             return match command::read_lines(command_line)

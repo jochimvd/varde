@@ -5,6 +5,15 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=dev-common
 source "$repo_dir/scripts/dev-common"
 
+usage() {
+    printf 'Usage: %s [OPTIONS]\n\n' "$0"
+    printf 'Options:\n'
+    printf '  --session ID  Use a named session [default: default]\n'
+    printf '  --release     Build and run the release profile\n'
+    printf '  --cairo       Use the GTK Cairo renderer\n'
+    printf '  -h, --help    Print help\n'
+}
+
 session=default
 profile=debug
 build_args=()
@@ -12,6 +21,10 @@ renderer=
 
 while (( $# > 0 )); do
     case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --release)
             profile=release
             build_args+=(--release)
@@ -28,7 +41,7 @@ while (( $# > 0 )); do
             shift
             ;;
         *)
-            printf 'usage: %s [--session ID] [--release] [--cairo]\n' "$0" >&2
+            usage >&2
             exit 1
             ;;
     esac
@@ -50,6 +63,11 @@ if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
 fi
 
 host_instance=${HYPRLAND_INSTANCE_SIGNATURE:?dev-session must be started from Hyprland}
+if ! hyprctl -j instances | jq -e --arg instance "$host_instance" \
+    '.[] | select(.instance == $instance)' >/dev/null; then
+    printf 'the terminal has a stale Hyprland instance signature; open a new terminal and retry\n' >&2
+    exit 1
+fi
 
 mkdir -p "$VARDE_DEV_RUNTIME_DIR"
 exec {lock_fd}>"$VARDE_DEV_RUNTIME_DIR/lock"

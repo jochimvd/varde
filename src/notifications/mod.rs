@@ -79,7 +79,7 @@ impl Manager {
         }
     }
 
-    pub(super) fn clear(&self) {
+    pub(crate) fn clear(&self) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
             daemon.clear();
         }

@@ -1,17 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-bus_address=${VARDE_NOTIFICATION_BUS_ADDRESS:?VARDE_NOTIFICATION_BUS_ADDRESS is not set}
-service=org.freedesktop.Notifications
-path=/org/freedesktop/Notifications
-interface=org.freedesktop.Notifications
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'Usage: %s [OPTIONS]\n\n' "$0"
+    printf 'Options:\n'
+    printf '  --session ID  Target session [default: default]\n'
+    printf '  -h, --help    Print help\n'
+}
+
+session=default
+while (( $# > 0 )); do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --session)
+            if (( $# < 2 )); then
+                printf 'missing value for --session\n' >&2
+                exit 1
+            fi
+            session=$2
+            shift
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+dev_notify=("$repo_dir/scripts/dev-notify" --session "$session")
 step=0
 last_id=
-
-command -v gdbus >/dev/null || {
-    printf 'missing required command: gdbus\n' >&2
-    exit 1
-}
 
 next() {
     step=$((step + 1))
@@ -28,7 +56,6 @@ notify() {
     local actions=$6
     local hints=$7
     local timeout=$8
-    local reply
 
     printf '\napp_name:   %s\n' "$app_name"
     printf 'replaces_id: %s\n' "$replaces_id"
@@ -39,19 +66,10 @@ notify() {
     printf 'hints:       %s\n' "$hints"
     printf 'timeout_ms:  %s\n' "$timeout"
 
-    reply=$(gdbus call \
-        --address "$bus_address" \
-        --dest "$service" \
-        --object-path "$path" \
-        --method "$interface.Notify" \
-        -- "$app_name" "$replaces_id" "$app_icon" "$summary" "$body" \
-        "$actions" "$hints" "$timeout")
-    if [[ $reply =~ uint32\ ([0-9]+) ]]; then
-        last_id=${BASH_REMATCH[1]}
-    else
-        printf 'unexpected Notify response: %s\n' "$reply" >&2
-        exit 1
-    fi
+    last_id=$("${dev_notify[@]}" \
+        --app "$app_name" --replaces "$replaces_id" --icon "$app_icon" \
+        --actions "$actions" --hints "$hints" --timeout "$timeout" \
+        "$summary" "$body")
     printf 'notification_id: %s\n' "$last_id"
 }
 
@@ -61,12 +79,7 @@ close_notification() {
     printf '\nmethod:          CloseNotification\n'
     printf 'notification_id: %s\n' "$id"
     printf 'expected:        removed from the notification center\n'
-    gdbus call \
-        --address "$bus_address" \
-        --dest "$service" \
-        --object-path "$path" \
-        --method "$interface.CloseNotification" \
-        "$id"
+    "${dev_notify[@]}" --close "$id"
 }
 
 printf 'Interactive notification protocol tests\n'
