@@ -28,7 +28,7 @@ pub(in crate::notifications) struct Bell {
 }
 
 impl Bell {
-    pub fn new(manager: &Rc<Manager>, app: &gtk::Application) -> Self {
+    pub fn new(manager: &Rc<Manager>) -> Self {
         let button = gtk::Button::builder()
             .focusable(false)
             .valign(gtk::Align::Center)
@@ -51,8 +51,12 @@ impl Bell {
         button.set_child(Some(&icon));
 
         button.connect_clicked({
-            let app = app.clone();
-            move |_| app.activate_action("notifications", None)
+            let manager = Rc::downgrade(manager);
+            move |_| {
+                if let Some(manager) = manager.upgrade() {
+                    manager.toggle();
+                }
+            }
         });
         for mouse_button in [2, 3] {
             let click = gtk::GestureClick::new();
@@ -100,6 +104,7 @@ impl Bell {
     }
 }
 
+#[allow(deprecated)]
 fn draw_icon(
     icon: &gtk::DrawingArea,
     context: &cairo::Context,

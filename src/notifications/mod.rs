@@ -49,9 +49,9 @@ impl Manager {
         self.daemon.replace(Some(daemon));
     }
 
-    pub fn button(self: &Rc<Self>, app: &gtk::Application) -> gtk::Button {
+    pub fn button(self: &Rc<Self>) -> gtk::Button {
         if self.bell.borrow().is_none() {
-            let bell = Bell::new(self, app);
+            let bell = Bell::new(self);
             bell.update(&self.snapshot.borrow());
             self.bell.replace(Some(bell));
         }
