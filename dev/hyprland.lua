@@ -31,7 +31,7 @@ hl.permission({ binary = "/usr/bin/grim", type = "screencopy", mode = "allow" })
 hl.on("hyprland.start", function()
     local varde = os.getenv("VARDE_DEV_BINARY")
     if varde then
-        hl.exec_cmd(varde)
+        hl.exec_cmd(varde .. " start")
     end
 end)
 

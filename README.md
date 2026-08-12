@@ -14,24 +14,27 @@ directly in the source.
 ## Usage
 
 ```sh
-cargo run
+cargo run -- start
 ```
 
-The launcher and notification center are exposed as application actions:
+Run `varde --help` to see the command-line interface. Once the shell is
+running, its panels can be toggled directly:
 
 ```sh
-gapplication action org.varde.desktop launcher
-gapplication action org.varde.desktop notifications
+varde launcher
+varde clipboard
+varde notifications
 ```
 
 The launcher fuzzy-searches installed applications. It can also search
 clipboard history or act as a dmenu-style selector:
 
 ```sh
-gapplication action org.varde.desktop clipboard
-varde launcher clipboard
-printf "Lock\nSuspend\nReboot\nShutdown" | varde launcher --dmenu -p "System..."
+printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."
 ```
+
+The panels are also exposed as the `launcher`, `clipboard`, and `notifications`
+actions on the `org.varde.desktop` GApplication.
 
 Notifications include floating popups and a persistent notification center.
 Non-critical popups hide after five seconds; critical popups have no automatic

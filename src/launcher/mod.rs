@@ -1,5 +1,4 @@
 mod clipboard;
-mod command;
 mod preview;
 mod search;
 mod source;
@@ -65,44 +64,12 @@ impl Manager {
         app.add_action(&action);
     }
 
-    pub fn handle_command_line(
-        self: &Rc<Self>,
-        app: &gtk::Application,
-        command_line: &gio::ApplicationCommandLine,
-    ) -> glib::ExitCode {
-        match command::parse(&command_line.arguments()) {
-            Ok(command::Request::Activate) => {
-                app.activate();
-                0.into()
-            }
-            Ok(command::Request::Launcher) => {
-                app.activate();
-                self.toggle_source(app, Mode::Apps);
-                0.into()
-            }
-            Ok(command::Request::Clipboard) => {
-                app.activate();
-                self.toggle_source(app, Mode::Clipboard);
-                0.into()
-            }
-            Ok(command::Request::Dmenu { prompt }) => match command::read_lines(command_line)
-                .and_then(|lines| self.run_dmenu(app, lines, &prompt))
-            {
-                Ok(Some(selected)) => {
-                    command_line.print_literal(&format!("{selected}\n"));
-                    0.into()
-                }
-                Ok(None) => 1.into(),
-                Err(error) => {
-                    command_line.printerr_literal(&format!("varde: {error}\n"));
-                    2.into()
-                }
-            },
-            Err(error) => {
-                command_line.printerr_literal(&format!("varde: {error}\n{}\n", command::USAGE));
-                2.into()
-            }
-        }
+    pub fn toggle_apps(self: &Rc<Self>, app: &gtk::Application) {
+        self.toggle_source(app, Mode::Apps);
+    }
+
+    pub fn toggle_clipboard(self: &Rc<Self>, app: &gtk::Application) {
+        self.toggle_source(app, Mode::Clipboard);
     }
 
     fn toggle_source(self: &Rc<Self>, app: &gtk::Application, mode: Mode) {
