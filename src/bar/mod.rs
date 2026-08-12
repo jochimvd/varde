@@ -102,7 +102,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     right.append(&connectivity::network());
     right.append(&connectivity::audio());
     right.append(&system.right);
-    right.append(&notifications.button(app));
+    right.append(&notifications.button());
     right.append(&services.privacy);
 
     let layout = bar_layout(&left, &center, &right);

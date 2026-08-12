@@ -17,7 +17,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn group_order_stays_stable_until_reset() {
+    fn new_groups_go_first_while_existing_groups_stay_stable() {
         let strings = |keys: &[&str]| {
             keys.iter()
                 .map(|key| (*key).to_string())
@@ -29,10 +29,10 @@ mod tests {
         assert_eq!(order, strings(&["chat", "mail"]));
 
         update_group_order(&mut order, &strings(&["news", "mail", "chat"]), false);
-        assert_eq!(order, strings(&["chat", "mail", "news"]));
+        assert_eq!(order, strings(&["news", "chat", "mail"]));
 
         update_group_order(&mut order, &strings(&["news", "mail"]), false);
-        assert_eq!(order, strings(&["mail", "news"]));
+        assert_eq!(order, strings(&["news", "mail"]));
 
         update_group_order(&mut order, &strings(&["news", "mail"]), true);
         assert_eq!(order, strings(&["news", "mail"]));

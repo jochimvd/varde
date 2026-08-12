@@ -72,6 +72,9 @@ pub(super) fn notification_time(timestamp: Option<i64>) -> Option<String> {
 }
 
 fn format_notification_time(timestamp: i64, now: &glib::DateTime) -> Option<String> {
+    if now.to_unix() - timestamp < 60 {
+        return Some("now".into());
+    }
     let received = glib::DateTime::from_unix_local(timestamp).ok()?;
     let time = received.format("%H:%M").ok()?;
     if received.ymd() == now.ymd() {
@@ -122,6 +125,8 @@ mod tests {
         let now = local(2026, 8, 13, 18, 0);
         let format = |date: glib::DateTime| format_notification_time(date.to_unix(), &now).unwrap();
 
+        assert_eq!(format(local(2026, 8, 13, 18, 0)), "now");
+        assert_eq!(format(local(2026, 8, 13, 17, 59)), "17:59");
         assert_eq!(format(local(2026, 8, 13, 9, 15)), "09:15");
         assert_eq!(format(local(2026, 8, 12, 23, 45)), "Yesterday · 23:45");
         assert_eq!(format(local(2026, 8, 10, 8, 5)), "Mon · 08:05");
