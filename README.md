@@ -6,51 +6,99 @@ A small, personal desktop shell for Hyprland, written in Rust with GTK 4.
 
 ![Varde notification center](docs/images/varde-notifications.png)
 
-Varde currently provides a status bar, application and clipboard launchers,
+Varde provides a status bar, application and clipboard launchers,
 notifications, workspace controls, system status, idle inhibition, privacy
-indicators, and a StatusNotifier tray. Its layout and behavior are configured
-directly in the source.
+indicators, and a StatusNotifier tray. It is configured directly in the source.
 
-## Usage
+## Try it
+
+Varde provides a bar and the `org.freedesktop.Notifications` service. Stop any
+conflicting bar or notification daemon, then run it from a Hyprland session:
 
 ```sh
-cargo run -- start
+git clone https://github.com/jochimvd/varde.git
+cd varde
+cargo run --release -- start
 ```
 
-Run `varde --help` to see the command-line interface. Once the shell is
-running, its panels can be toggled directly:
+## Requirements
+
+Build dependencies: a current Rust toolchain, GTK 4.12 or newer, and
+gtk4-layer-shell.
+
+Runtime dependencies: Hyprland, PipeWire, WirePlumber, iwd, BlueZ, iproute2,
+PulseAudio utilities, `uwsm-app`, and JetBrains Mono Nerd Font. Notification
+sounds use `canberra-gtk-play` and `sound-theme-freedesktop`.
+
+Clipboard history requires `cliphist`, `wl-copy`, and a running watcher:
+
+```sh
+wl-paste --watch cliphist store
+```
+
+Optional bar actions use `pavucontrol`, `impala`, `bluetui`, `btop`, and
+`$TERMINAL`.
+
+## Install
+
+```sh
+cargo install --path . --locked
+```
+
+<details>
+<summary>Run Varde as a systemd user service</summary>
+
+Create `~/.config/systemd/user/varde.service`:
+
+```ini
+[Unit]
+Description=Varde desktop shell
+PartOf=graphical-session.target
+After=graphical-session.target
+Requisite=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=%h/.cargo/bin/varde start
+Restart=on-failure
+Slice=app-graphical.slice
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+```sh
+systemctl --user daemon-reload
+systemctl --user enable --now varde.service
+```
+
+</details>
+
+## Use
 
 ```sh
 varde launcher
 varde clipboard
 varde notifications
+varde notifications clear
 ```
-
-The launcher fuzzy-searches installed applications. It can also search
-clipboard history or act as a dmenu-style selector:
 
 ```sh
 printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."
 ```
 
-Notifications include floating popups and a persistent notification center.
-Non-critical popups hide after five seconds; critical popups have no automatic
-timeout. Opening the notification center consumes visible popups. Notifications
-remain live in the center until they are actioned, dismissed, or recalled by
-their sender. The application-provided expiration timeout is ignored.
+See `varde --help` for the complete CLI.
 
-## Requirements
+## Customize
 
-Varde targets its author's current Arch Linux system. The setup uses GTK 4,
-gtk4-layer-shell, Hyprland, PipeWire, WirePlumber, iwd, BlueZ, iproute2,
-PulseAudio utilities, libcanberra, `sound-theme-freedesktop`, coreutils,
-`uwsm-app`, `jq`, `grim`, and JetBrains Mono Nerd Font. Clipboard history
-additionally needs `cliphist`, `wl-copy`, and a running
-`wl-paste --watch cliphist store` process.
+The bar layout is in `src/bar/mod.rs`, modules are under `src/bar/modules/`,
+and appearance is defined in `src/style.css`.
 
-Bar actions call `hyprctl`, `wpctl`, `pactl`, `ip`, `iwctl`, `bluetoothctl`,
-`pw-dump`, `dot-menu-audio-switcher`, `pavucontrol`, `impala`, `bluetui`,
-`btop`, and the terminal configured by `$TERMINAL`.
+```sh
+cargo install --path . --locked
+systemctl --user restart varde.service
+```
 
-For the isolated nested-Hyprland development workflow and project checks, see
-[docs/development.md](docs/development.md).
+## Development
+
+See [docs/development.md](docs/development.md).
