@@ -135,7 +135,7 @@ impl Manager {
         }
     }
 
-    fn toggle(self: &Rc<Self>) {
+    pub fn toggle(self: &Rc<Self>) {
         if self
             .center
             .borrow()
