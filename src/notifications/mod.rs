@@ -7,8 +7,6 @@ mod view;
 
 use std::{cell::RefCell, rc::Rc};
 
-use gio::prelude::*;
-
 use model::Snapshot;
 use view::{Bell, Center, Popups};
 
@@ -49,24 +47,6 @@ impl Manager {
             }
         });
         self.daemon.replace(Some(daemon));
-    }
-
-    pub fn install_action(
-        self: &Rc<Self>,
-        app: &gtk::Application,
-        before_open: impl Fn() + 'static,
-    ) {
-        let action = gio::SimpleAction::new("notifications", None);
-        action.connect_activate({
-            let app = app.clone();
-            let manager = self.clone();
-            move |_, _| {
-                app.activate();
-                before_open();
-                manager.toggle();
-            }
-        });
-        app.add_action(&action);
     }
 
     pub fn button(self: &Rc<Self>, app: &gtk::Application) -> gtk::Button {

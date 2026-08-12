@@ -33,9 +33,6 @@ clipboard history or act as a dmenu-style selector:
 printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."
 ```
 
-The panels are also exposed as the `launcher`, `clipboard`, and `notifications`
-actions on the `org.varde.desktop` GApplication.
-
 Notifications include floating popups and a persistent notification center.
 Non-critical popups hide after five seconds; critical popups have no automatic
 timeout. Opening the notification center consumes visible popups. Notifications
