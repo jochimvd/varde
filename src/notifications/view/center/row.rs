@@ -316,6 +316,7 @@ impl Text {
         resident.set_tooltip_text(Some("Ongoing"));
         resident.set_visible(false);
         let fresh = fresh_dot();
+        fresh.add_css_class("notification-row-fresh");
         let spacer = gtk::Box::builder().hexpand(true).build();
         // Reserved for the expansion button so the summary width does not
         // depend on whether the row can be expanded.
