@@ -1,5 +1,5 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::{Rc, Weak},
 };
 
@@ -8,8 +8,8 @@ use gtk::prelude::*;
 use crate::notifications::{Manager, model::Group, view::common::application};
 
 use super::{
-    REVEAL_DURATION,
-    row::{Pointer, RowView, within},
+    CHEVRON_DOWN, CHEVRON_UP, REVEAL_DURATION, Seen,
+    row::{Pointer, RowView, fresh_dot, within},
 };
 
 const ICON_SIZE: i32 = 20;
@@ -21,8 +21,11 @@ pub(super) struct GroupView {
     icon: gtk::Stack,
     image: gtk::Image,
     name: gtk::Label,
+    fresh: gtk::Box,
+    has_fresh: Rc<Cell<bool>>,
     count: gtk::Label,
     list: gtk::Box,
+    revealer: gtk::Revealer,
     rows: RefCell<Vec<RowView>>,
     notifications: RefCell<Vec<u32>>,
     on_expansion: Rc<dyn Fn()>,
@@ -54,13 +57,21 @@ impl GroupView {
         icon.add_named(&fallback, Some("fallback"));
         icon.add_css_class("notification-group-icon");
         let name = gtk::Label::builder()
-            .hexpand(true)
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
+        let fresh = fresh_dot();
         let count = gtk::Label::builder().valign(gtk::Align::Center).build();
         count.add_css_class("notification-group-count");
-        let disclosure = gtk::Button::builder().focusable(false).label("▾").build();
+        let chevron = gtk::Label::new(Some(CHEVRON_UP));
+        chevron.add_css_class("notification-group-chevron");
+        let disclosure_content = gtk::Box::builder().valign(gtk::Align::Center).build();
+        disclosure_content.append(&count);
+        disclosure_content.append(&chevron);
+        let disclosure = gtk::Button::builder()
+            .focusable(false)
+            .child(&disclosure_content)
+            .build();
         disclosure.set_cursor_from_name(Some("pointer"));
         disclosure.add_css_class("notification-group-disclosure");
         let header = gtk::Box::builder()
@@ -68,9 +79,11 @@ impl GroupView {
             .valign(gtk::Align::Center)
             .build();
         header.add_css_class("notification-group-header");
+        let spacer = gtk::Box::builder().hexpand(true).build();
         header.append(&icon);
         header.append(&name);
-        header.append(&count);
+        header.append(&fresh);
+        header.append(&spacer);
         header.append(&disclosure);
 
         let list = gtk::Box::builder()
@@ -82,13 +95,18 @@ impl GroupView {
             .reveal_child(true)
             .child(&list)
             .build();
+        let has_fresh = Rc::new(Cell::new(false));
         disclosure.connect_clicked({
             let revealer = revealer.clone();
+            let chevron = chevron.clone();
+            let fresh = fresh.clone();
+            let has_fresh = Rc::clone(&has_fresh);
             let on_expansion = Rc::clone(on_expansion);
-            move |disclosure| {
+            move |_| {
                 let expanded = !revealer.reveals_child();
                 revealer.set_reveal_child(expanded);
-                disclosure.set_label(if expanded { "▾" } else { "▸" });
+                chevron.set_label(if expanded { CHEVRON_UP } else { CHEVRON_DOWN });
+                fresh.set_visible(has_fresh.get() && !expanded);
                 on_expansion();
             }
         });
@@ -103,8 +121,11 @@ impl GroupView {
             icon,
             image,
             name,
+            fresh,
+            has_fresh,
             count,
             list,
+            revealer,
             rows: RefCell::new(Vec::new()),
             notifications: RefCell::new(Vec::new()),
             on_expansion: Rc::clone(on_expansion),
@@ -127,7 +148,7 @@ impl GroupView {
             .find_map(|row| row.pointer_target(picked))
     }
 
-    pub(super) fn update(&self, group: &Group) {
+    pub(super) fn update(&self, group: &Group, seen: &Seen) {
         let (name, icon) = application(group);
         self.image.clear();
         match icon {
@@ -138,7 +159,9 @@ impl GroupView {
             None => self.icon.set_visible_child_name("fallback"),
         }
         self.name.set_label(&name);
-        self.count.set_label(&group.notifications.len().to_string());
+        let count = group.notifications.len();
+        self.count.set_label(&count.to_string());
+        self.count.set_visible(count > 1);
         self.notifications.replace(
             group
                 .notifications
@@ -147,6 +170,7 @@ impl GroupView {
                 .collect(),
         );
 
+        let mut fresh = false;
         let mut stale = self.rows.take();
         let mut rows = Vec::with_capacity(group.notifications.len());
         let mut sibling = None::<gtk::Widget>;
@@ -155,7 +179,9 @@ impl GroupView {
                 Some(index) => stale.remove(index),
                 None => RowView::new(&self.manager, &self.on_expansion, self.interactive),
             };
-            row.update(notification);
+            let unseen = !seen.contains(&(notification.id, notification.revision));
+            fresh |= unseen;
+            row.update(notification, unseen);
             if row.container.parent().is_none() {
                 self.list.append(&row.container);
             }
@@ -168,11 +194,21 @@ impl GroupView {
             self.list.remove(&row.container);
         }
         self.rows.replace(rows);
+        // A collapsed group hides its rows, so the header carries their mark.
+        self.has_fresh.set(fresh);
+        self.fresh
+            .set_visible(fresh && !self.revealer.reveals_child());
     }
 
     pub(super) fn refresh(&self) {
         for row in self.rows.borrow().iter() {
             row.refresh();
+        }
+    }
+
+    pub(super) fn refresh_times(&self) {
+        for row in self.rows.borrow().iter() {
+            row.refresh_time();
         }
     }
 

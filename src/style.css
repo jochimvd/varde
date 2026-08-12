@@ -521,11 +521,17 @@ window.notification-popups {
 }
 
 .notification-group-disclosure {
-    min-width: 30px;
+    /* The monospaced variant offsets the chevron off centre. */
+    font-family: 'JetBrainsMono Nerd Font Propo';
     min-height: 30px;
-    padding: 0;
+    padding: 2px 6px;
     border-radius: 6px;
     color: @text_secondary_color;
+}
+
+/* Square slot, so a count grows the button without moving the chevron. */
+.notification-group-chevron {
+    min-width: 22px;
 }
 
 .notification-group-disclosure:hover {
@@ -544,12 +550,10 @@ window.notification-popups {
     background: @overlay_subtle_color;
 }
 
+/* Padding on the count, not the button, so a group of one stays square. */
 .notification-group-count {
-    min-width: 16px;
-    padding: 1px 5px;
-    border-radius: 5px;
-    color: @text_secondary_color;
-    background: @overlay_subtle_color;
+    padding-left: 6px;
+    font-size: 12px;
 }
 
 .notification-row {
@@ -571,9 +575,7 @@ window.notification-popups {
 }
 
 .notification-row.critical {
-    /* Painted over the margin the surface already leaves, so the accent costs
-       no layout space and every row keeps the same content position. A border
-       would instead mitre into the separator and cut its own top edge. */
+    /* An overlay, so it costs no layout and never mitres into the separator. */
     box-shadow: inset 2px 0 0 @critical_color;
 }
 
@@ -586,7 +588,22 @@ window.notification-popups {
     font-size: 12px;
 }
 
+.notification-fresh {
+    min-width: 6px;
+    min-height: 6px;
+    border-radius: 3px;
+    background: @accent_color;
+}
+
+.notification-resident {
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    color: @text_muted_color;
+    font-size: 12px;
+}
+
 .notification-expand {
+    /* Proportional variant: the monospaced one offsets the wide chevrons. */
+    font-family: 'JetBrainsMono Nerd Font Propo';
     padding: 0;
     min-width: 30px;
     min-height: 30px;
@@ -604,7 +621,6 @@ window.notification-popups {
     color: @text_secondary_color;
 }
 
-/* Continues the body text, so it must not repeat the gap above it. */
 .notification-body.overflow {
     margin-top: 0;
 }

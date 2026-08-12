@@ -12,13 +12,22 @@ use crate::notifications::{
     view::common::{activation_token, notification_time, progress_bar, set_picture},
 };
 
-use super::REVEAL_DURATION;
+use super::{CHEVRON_DOWN, CHEVRON_UP, REVEAL_DURATION};
 
 const PICTURE_SIZE: i32 = 48;
 const CONTENT_SPACING: i32 = 10;
 const HEADER_SPACING: i32 = 5;
 const EXPAND_BUTTON_WIDTH: i32 = 30;
 const BODY_LINES: i32 = 3;
+const RESIDENT_ICON: &str = "󰐃";
+
+/// Marks a notification the user has not been shown yet.
+pub(super) fn fresh_dot() -> gtk::Box {
+    let dot = gtk::Box::builder().valign(gtk::Align::Center).build();
+    dot.add_css_class("notification-fresh");
+    dot.set_visible(false);
+    dot
+}
 
 pub(super) struct RowView {
     pub(super) container: gtk::Box,
@@ -27,6 +36,7 @@ pub(super) struct RowView {
     actions: gtk::FlowBox,
     expansion: Rc<Expansion>,
     id: Cell<u32>,
+    received_at: Cell<Option<i64>>,
     revision: Cell<Option<u64>>,
     named_actions: Cell<bool>,
     actionable: Rc<Cell<bool>>,
@@ -58,6 +68,8 @@ struct Text {
     container: gtk::Box,
     summary: gtk::Label,
     time: gtk::Label,
+    resident: gtk::Label,
+    fresh: gtk::Box,
     body: gtk::Label,
     overflow: gtk::Label,
     overflow_revealer: gtk::Revealer,
@@ -90,7 +102,7 @@ impl RowView {
         content.append(&text.container);
 
         let expand = gtk::Button::builder()
-            .label("▾")
+            .label(CHEVRON_DOWN)
             .focusable(false)
             .halign(gtk::Align::End)
             .valign(gtk::Align::Start)
@@ -108,7 +120,6 @@ impl RowView {
             .row_spacing(2)
             .max_children_per_line(3)
             .build();
-        actions.set_cursor_from_name(Some("default"));
         actions.add_css_class("notification-actions");
         let actions_revealer = gtk::Revealer::builder()
             .transition_duration(REVEAL_DURATION)
@@ -146,7 +157,7 @@ impl RowView {
         });
 
         let actionable = Rc::new(Cell::new(false));
-        track_hover(&surface, &expand, &actions_revealer, &actionable);
+        track_hover(&surface, &actionable);
 
         Self {
             container,
@@ -155,6 +166,7 @@ impl RowView {
             actions,
             expansion,
             id: Cell::new(0),
+            received_at: Cell::new(None),
             revision: Cell::new(None),
             named_actions: Cell::new(false),
             actionable,
@@ -169,8 +181,7 @@ impl RowView {
     pub(super) fn pointer_target(&self, picked: &gtk::Widget) -> Option<Pointer> {
         within(picked, &self.container).then(|| Pointer::Row {
             id: self.id.get(),
-            activates: self.actionable.get()
-                && !on_control(picked, &self.expansion.expand, &self.expansion.actions),
+            activates: self.actionable.get() && !on_control(picked),
         })
     }
 
@@ -178,10 +189,17 @@ impl RowView {
         self.id.get()
     }
 
-    pub(super) fn update(&self, notification: &Notification) {
+    pub(super) fn refresh_time(&self) {
+        let time = notification_time(self.received_at.get());
+        self.expansion.text.set_time(time.as_deref());
+    }
+
+    pub(super) fn update(&self, notification: &Notification, fresh: bool) {
         self.id.set(notification.id);
+        self.received_at.set(notification.received_at);
         let time = notification_time(notification.received_at);
         self.expansion.text.set_time(time.as_deref());
+        self.expansion.text.fresh.set_visible(fresh);
         if self.revision.replace(Some(notification.revision)) == Some(notification.revision) {
             return;
         }
@@ -262,9 +280,7 @@ impl RowView {
         let hovered = self.actionable.get()
             && pointer_position(&self.surface)
                 .and_then(|(x, y)| self.surface.pick(x, y, gtk::PickFlags::DEFAULT))
-                .is_some_and(|picked| {
-                    !on_control(&picked, &self.expansion.expand, &self.expansion.actions)
-                });
+                .is_some_and(|picked| !on_control(&picked));
         set_hover(&self.surface, hovered);
     }
 }
@@ -272,7 +288,8 @@ impl RowView {
 impl Expansion {
     fn set(&self, expanded: bool) {
         self.expanded.set(expanded);
-        self.expand.set_label(if expanded { "▴" } else { "▾" });
+        self.expand
+            .set_label(if expanded { CHEVRON_UP } else { CHEVRON_DOWN });
         self.text.set_expanded(expanded);
         self.actions.set_reveal_child(expanded);
     }
@@ -294,6 +311,11 @@ impl Text {
         summary.add_css_class("notification-summary");
         let time = gtk::Label::new(None);
         time.add_css_class("notification-time");
+        let resident = gtk::Label::new(Some(RESIDENT_ICON));
+        resident.add_css_class("notification-resident");
+        resident.set_tooltip_text(Some("Ongoing"));
+        resident.set_visible(false);
+        let fresh = fresh_dot();
         let spacer = gtk::Box::builder().hexpand(true).build();
         // Reserved for the expansion button so the summary width does not
         // depend on whether the row can be expanded.
@@ -306,6 +328,8 @@ impl Text {
             .build();
         header.append(&summary);
         header.append(&time);
+        header.append(&resident);
+        header.append(&fresh);
         header.append(&spacer);
         header.append(&expand_space);
         container.append(&header);
@@ -353,6 +377,8 @@ impl Text {
             container,
             summary,
             time,
+            resident,
+            fresh,
             body,
             overflow,
             overflow_revealer,
@@ -371,6 +397,7 @@ impl Text {
     fn update(&self, notification: &Notification, time: Option<&str>) {
         self.summary.set_label(&notification.summary);
         self.set_time(time);
+        self.resident.set_visible(notification.resident);
 
         self.full_body.replace(notification.body.clone());
         self.split.replace(None);
@@ -449,19 +476,12 @@ fn split_body(body: &gtk::Label, text: &str, width: i32) -> Option<(String, Stri
     ))
 }
 
-fn track_hover(
-    surface: &gtk::Box,
-    expand: &gtk::Button,
-    actions: &gtk::Revealer,
-    actionable: &Rc<Cell<bool>>,
-) {
+fn track_hover(surface: &gtk::Box, actionable: &Rc<Cell<bool>>) {
     let motion = gtk::EventControllerMotion::builder()
         .propagation_phase(gtk::PropagationPhase::Capture)
         .build();
     let update = {
         let surface = surface.downgrade();
-        let expand = expand.clone();
-        let actions = actions.clone();
         let actionable = Rc::clone(actionable);
         move |x, y| {
             let Some(surface) = surface.upgrade() else {
@@ -470,7 +490,7 @@ fn track_hover(
             let hovered = actionable.get()
                 && surface
                     .pick(x, y, gtk::PickFlags::DEFAULT)
-                    .is_some_and(|picked| !on_control(&picked, &expand, &actions));
+                    .is_some_and(|picked| !on_control(&picked));
             set_hover(&surface, hovered);
         }
     };
@@ -505,9 +525,10 @@ fn set_hover(surface: &gtk::Box, hovered: bool) {
     surface.set_cursor_from_name(hovered.then_some("pointer"));
 }
 
-/// Whether the widget is a control rather than part of the activation surface.
-fn on_control(picked: &gtk::Widget, expand: &gtk::Button, actions: &gtk::Revealer) -> bool {
-    within(picked, expand) || within(picked, actions)
+/// Only the buttons themselves are controls; the space around them in the
+/// action row still belongs to the notification.
+fn on_control(picked: &gtk::Widget) -> bool {
+    picked.ancestor(gtk::Button::static_type()).is_some()
 }
 
 pub(super) fn within(widget: &gtk::Widget, container: &impl IsA<gtk::Widget>) -> bool {

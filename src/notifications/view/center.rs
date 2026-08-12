@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashSet,
     rc::{Rc, Weak},
 };
 
@@ -22,6 +23,14 @@ const MIN_CONTENT_HEIGHT: i32 = 98;
 const MAX_CONTENT_HEIGHT: i32 = 520;
 const GROUP_SPACING: i32 = 8;
 const REVEAL_DURATION: u32 = 150;
+const TIME_REFRESH_SECONDS: u32 = 15;
+/// Chevrons show what the click does: reveal, or collapse again.
+const CHEVRON_DOWN: &str = "\u{f0140}";
+const CHEVRON_UP: &str = "\u{f0143}";
+
+/// The notifications on screen when the center opened; anything else arrived
+/// while the user was reading it.
+type Seen = HashSet<(u32, u64)>;
 
 pub(in crate::notifications) struct Center {
     popover: gtk::Popover,
@@ -31,6 +40,8 @@ pub(in crate::notifications) struct Center {
     dnd: gtk::Button,
     clear: gtk::Button,
     groups: Rc<RefCell<Vec<GroupView>>>,
+    seen: RefCell<Seen>,
+    ticking: Rc<Cell<bool>>,
     on_expansion: Rc<dyn Fn()>,
     manager: Weak<Manager>,
     interactive: bool,
@@ -152,6 +163,8 @@ impl Center {
             dnd,
             clear,
             groups,
+            seen: RefCell::new(Seen::new()),
+            ticking: Rc::new(Cell::new(false)),
             manager: Rc::downgrade(manager),
             interactive,
         }
@@ -162,10 +175,19 @@ impl Center {
     }
 
     pub fn show(&self, snapshot: &Snapshot) {
+        self.seen.replace(
+            snapshot
+                .groups
+                .iter()
+                .flat_map(|group| &group.notifications)
+                .map(|notification| (notification.id, notification.revision))
+                .collect(),
+        );
         self.render(snapshot, true);
         self.scroll.vadjustment().set_value(0.0);
         self.popover.popup();
         self.refresh_after_layout();
+        self.refresh_times_while_open();
     }
 
     pub fn hide(&self) {
@@ -206,7 +228,7 @@ impl Center {
                 Some(index) => stale.remove(index),
                 None => GroupView::new(key, &self.manager, &self.on_expansion, self.interactive),
             };
-            view.update(group);
+            view.update(group, &self.seen.borrow());
             if view.container.parent().is_none() {
                 self.list.append(&view.container);
             }
@@ -242,6 +264,30 @@ impl Center {
             self.popover.present();
             self.refresh_after_layout();
         }
+    }
+
+    /// "now" stops being true while the center sits open.
+    fn refresh_times_while_open(&self) {
+        if self.ticking.replace(true) {
+            return;
+        }
+        let popover = self.popover.downgrade();
+        let groups = Rc::downgrade(&self.groups);
+        let ticking = Rc::clone(&self.ticking);
+        glib::timeout_add_seconds_local(TIME_REFRESH_SECONDS, move || {
+            let (Some(popover), Some(groups)) = (popover.upgrade(), groups.upgrade()) else {
+                ticking.set(false);
+                return glib::ControlFlow::Break;
+            };
+            if !popover.is_visible() {
+                ticking.set(false);
+                return glib::ControlFlow::Break;
+            }
+            for group in groups.borrow().iter() {
+                group.refresh_times();
+            }
+            glib::ControlFlow::Continue
+        });
     }
 
     /// Hover state and ellipsization both depend on the rendered layout, which
