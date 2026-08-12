@@ -80,14 +80,18 @@ impl Bell {
         }
     }
 
-    pub fn update(&self, snapshot: &Snapshot) {
+    pub fn update(&self, snapshot: &Snapshot, center_open: bool) {
         let alt = snapshot.alt();
         self.state.set(BellState {
             dnd: snapshot.dnd,
             notified: snapshot.count > 0,
         });
         self.icon.queue_draw();
-        self.button.set_tooltip_text(Some(&snapshot.tooltip()));
+        // GTK chains a new tooltip under the open center, and a popup created
+        // while that one is still mapping never gets configured, which wedges
+        // the client. The open center says what the tooltip would anyway.
+        self.button
+            .set_tooltip_text((!center_open).then(|| snapshot.tooltip()).as_deref());
 
         let mut current = self.class.borrow_mut();
         if *current != alt {
