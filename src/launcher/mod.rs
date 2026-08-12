@@ -6,7 +6,6 @@ mod view;
 
 use std::{cell::RefCell, rc::Rc};
 
-use gio::prelude::*;
 use gtk::glib;
 
 use source::{Activation, Event, Outcome, Source};
@@ -32,36 +31,6 @@ impl Manager {
             launcher: RefCell::new(None),
             dmenu: RefCell::new(None),
         })
-    }
-
-    pub fn install_actions(
-        self: &Rc<Self>,
-        app: &gtk::Application,
-        before_open: impl Fn() + 'static,
-    ) {
-        let before_open: Rc<dyn Fn()> = Rc::new(before_open);
-        self.add_action(app, "launcher", Mode::Apps, Rc::clone(&before_open));
-        self.add_action(app, "clipboard", Mode::Clipboard, before_open);
-    }
-
-    fn add_action(
-        self: &Rc<Self>,
-        app: &gtk::Application,
-        name: &str,
-        mode: Mode,
-        before_open: Rc<dyn Fn()>,
-    ) {
-        let action = gio::SimpleAction::new(name, None);
-        action.connect_activate({
-            let app = app.clone();
-            let manager = self.clone();
-            move |_, _| {
-                app.activate();
-                before_open();
-                manager.toggle_source(&app, mode);
-            }
-        });
-        app.add_action(&action);
     }
 
     pub fn toggle_apps(self: &Rc<Self>, app: &gtk::Application) {

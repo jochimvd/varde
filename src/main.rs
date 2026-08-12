@@ -38,19 +38,10 @@ fn main() -> glib::ExitCode {
         .build();
 
     app.connect_startup({
-        let launcher = launcher.clone();
         let notifications = notifications.clone();
         move |app| {
             load_styles(app);
             notifications.start(app);
-            launcher.install_actions(app, {
-                let notifications = notifications.clone();
-                move || notifications.close()
-            });
-            notifications.install_action(app, {
-                let launcher = launcher.clone();
-                move || launcher.close()
-            });
         }
     });
     app.connect_activate({

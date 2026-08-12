@@ -37,9 +37,9 @@ end)
 
 hl.bind("CTRL + ALT + Escape", hl.dsp.exit())
 hl.bind("CTRL + Q", hl.dsp.window.close())
-local app_id = os.getenv("VARDE_DEV_APP_ID") or "org.varde.desktop"
-hl.bind("CTRL + SPACE", hl.dsp.exec_cmd("gapplication action " .. app_id .. " launcher"))
-hl.bind("CTRL + V", hl.dsp.exec_cmd("gapplication action " .. app_id .. " clipboard"))
+local varde = os.getenv("VARDE_DEV_BINARY") or "varde"
+hl.bind("CTRL + SPACE", hl.dsp.exec_cmd(varde .. " launcher"))
+hl.bind("CTRL + V", hl.dsp.exec_cmd(varde .. " clipboard"))
 
 for workspace = 1, 9 do
     hl.bind("CTRL + " .. workspace, hl.dsp.focus({ workspace = workspace }))
