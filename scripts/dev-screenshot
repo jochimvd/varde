@@ -5,10 +5,43 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=dev-common
 source "$repo_dir/scripts/dev-common"
 
+usage() {
+    printf 'Usage: %s [OPTIONS] [OUTPUT]\n\n' "$0"
+    printf 'Arguments:\n'
+    printf '  OUTPUT           PNG path [default: target/dev/<session>/screenshot.png]\n\n'
+    printf 'Options:\n'
+    printf '  --session ID     Target session [default: default]\n'
+    printf '  --no-pointer     Exclude the pointer from the capture\n'
+    printf '  --crop GEOMETRY  Capture region formatted as X,Y WxH\n'
+    printf '  --zoom N         Scale by a positive integer without smoothing\n'
+    printf '  -h, --help       Print help\n'
+}
+
 session=default
 output_file=
+pointer=true
+crop=
+zoom=
 while (( $# > 0 )); do
     case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --no-pointer)
+            pointer=false
+            ;;
+        --crop|--zoom)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --crop) crop=$2 ;;
+                --zoom) zoom=$2 ;;
+            esac
+            shift
+            ;;
         --session)
             if (( $# < 2 )); then
                 printf 'missing value for --session\n' >&2
@@ -20,19 +53,19 @@ while (( $# > 0 )); do
         --)
             shift
             if (( $# != 1 )) || [[ -n $output_file ]]; then
-                printf 'usage: %s [--session ID] [OUTPUT]\n' "$0" >&2
+                usage >&2
                 exit 1
             fi
             output_file=$1
             break
             ;;
         -*)
-            printf 'usage: %s [--session ID] [OUTPUT]\n' "$0" >&2
+            usage >&2
             exit 1
             ;;
         *)
             if [[ -n $output_file ]]; then
-                printf 'usage: %s [--session ID] [OUTPUT]\n' "$0" >&2
+                usage >&2
                 exit 1
             fi
             output_file=$1
@@ -41,6 +74,15 @@ while (( $# > 0 )); do
     shift
 done
 
+if [[ -n $zoom && ( ! $zoom =~ ^[0-9]+$ || $zoom == 0 ) ]]; then
+    printf 'zoom must be a positive integer\n' >&2
+    exit 1
+fi
+if [[ -n $crop && ! $crop =~ ^-?[0-9]+,-?[0-9]+\ [1-9][0-9]*x[1-9][0-9]*$ ]]; then
+    printf 'invalid crop geometry: %s\n' "$crop" >&2
+    exit 1
+fi
+
 varde_dev_select_session "$session"
 output_file=${output_file:-$repo_dir/target/dev/$session/screenshot.png}
 
@@ -48,12 +90,32 @@ command -v grim >/dev/null || {
     printf 'missing required command: grim\n' >&2
     exit 1
 }
+if [[ -n $zoom ]]; then
+    command -v magick >/dev/null || {
+        printf 'missing required command: magick\n' >&2
+        exit 1
+    }
+fi
 
 varde_dev_load_session
 
 mkdir -p "$(dirname -- "$output_file")"
+grim_args=()
+if [[ $pointer == true ]]; then
+    grim_args+=(-c)
+fi
+if [[ -n $crop ]]; then
+    grim_args+=(-g "$crop")
+else
+    grim_args+=(-o "$VARDE_DEV_OUTPUT")
+fi
 WAYLAND_DISPLAY=$VARDE_DEV_WAYLAND_DISPLAY \
 HYPRLAND_INSTANCE_SIGNATURE=$VARDE_DEV_INSTANCE \
-    grim -o "$VARDE_DEV_OUTPUT" "$output_file"
+    grim "${grim_args[@]}" "$output_file"
+
+# Nearest neighbour keeps single pixels readable when the image is looked at.
+if [[ -n $zoom ]]; then
+    magick "$output_file" -filter point -resize "$((zoom * 100))%" "$output_file"
+fi
 
 printf '%s\n' "$output_file"

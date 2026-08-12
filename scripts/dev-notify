@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'Usage: %s [OPTIONS] SUMMARY [BODY]\n' "$0"
+    printf '       %s [--session ID] --close ID\n' "$0"
+    printf '       %s [--session ID] --clear\n\n' "$0"
+    printf 'Options:\n'
+    printf '  --session ID     Target session [default: default]\n'
+    printf '  --app NAME       Application name [default: Dev]\n'
+    printf '  --icon NAME      Theme icon name or path [default: dialog-information]\n'
+    printf '  --actions LIST   GVariant string array of key/label pairs [default: []]\n'
+    printf "  --hints DICT     GVariant a{sv} dictionary [default: {'urgency': <byte 1>}]\n"
+    printf '  --replaces ID    Replace an unsigned notification ID [default: 0]\n'
+    printf '  --timeout MS     Signed application timeout in milliseconds [default: 0]\n'
+    printf '  --close ID       Close one unsigned notification ID\n'
+    printf '  --clear          Clear all notifications\n'
+    printf '  -h, --help       Print help\n'
+}
+
+session=default
+app='Dev'
+icon='dialog-information'
+actions='[]'
+hints="{'urgency': <byte 1>}"
+replaces=0
+timeout=0
+close=
+clear=false
+summary=
+body=
+send_options=false
+
+while (( $# > 0 )); do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --session|--app|--icon|--actions|--hints|--replaces|--timeout|--close)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --session) session=$2 ;;
+                --app) app=$2 ;;
+                --icon) icon=$2 ;;
+                --actions) actions=$2 ;;
+                --hints) hints=$2 ;;
+                --replaces) replaces=$2 ;;
+                --timeout) timeout=$2 ;;
+                --close) close=$2 ;;
+            esac
+            [[ $1 == --session || $1 == --close ]] || send_options=true
+            shift
+            ;;
+        --clear)
+            clear=true
+            ;;
+        -*)
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z $summary ]]; then
+                summary=$1
+            elif [[ -z $body ]]; then
+                body=$1
+            else
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
+
+mode_count=0
+[[ -n $summary ]] && mode_count=$((mode_count + 1))
+[[ -n $close ]] && mode_count=$((mode_count + 1))
+[[ $clear == true ]] && mode_count=$((mode_count + 1))
+if (( mode_count != 1 )) ||
+    [[ -n $close && ( $send_options == true || -n $body ) ]] ||
+    [[ $clear == true && ( $send_options == true || -n $body ) ]]; then
+    usage >&2
+    exit 1
+fi
+if [[ -n $close && ! $close =~ ^[0-9]+$ ]]; then
+    printf 'invalid notification ID: %s\n' "$close" >&2
+    exit 1
+fi
+if [[ ! $replaces =~ ^[0-9]+$ ]]; then
+    printf 'invalid replacement ID: %s\n' "$replaces" >&2
+    exit 1
+fi
+if [[ ! $timeout =~ ^-?[0-9]+$ ]]; then
+    printf 'invalid timeout: %s\n' "$timeout" >&2
+    exit 1
+fi
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+
+call() {
+    local method=$1
+    shift
+    gdbus call --address "$VARDE_DEV_DBUS_ADDRESS" \
+        --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method "org.freedesktop.Notifications.$method" "$@"
+}
+
+if [[ -n $close ]]; then
+    call CloseNotification "$close" >/dev/null
+    exit 0
+fi
+
+if [[ $clear == true ]]; then
+    VARDE_DEV_APP_ID=$VARDE_DEV_APP_ID \
+        "$repo_dir/target/$VARDE_DEV_PROFILE/varde" notifications clear
+    exit 0
+fi
+
+reply=$(call Notify -- "$app" "$replaces" "$icon" "$summary" "$body" "$actions" "$hints" "$timeout")
+if [[ $reply =~ uint32\ ([0-9]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+else
+    printf 'unexpected Notify response: %s\n' "$reply" >&2
+    exit 1
+fi

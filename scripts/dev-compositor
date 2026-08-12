@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if (( $# < 2 )); then
+    printf 'usage: %s PID_FILE WORK_DIR [HYPRLAND_ARGUMENTS...]\n' "$0" >&2
+    exit 1
+fi
+
 pid_file=$1
 work_dir=$2
 shift 2

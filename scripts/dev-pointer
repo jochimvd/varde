@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'Usage: %s [--session ID] move X Y\n' "$0"
+    printf '       %s [--session ID] click X Y [--button BUTTON]\n\n' "$0"
+    printf 'Arguments:\n'
+    printf '  X Y            Absolute non-negative nested-output coordinates\n\n'
+    printf 'Options:\n'
+    printf '  --session ID   Target session [default: default]\n'
+    printf '  --button NAME  Click button: left, right, or middle [default: left]\n'
+    printf '  -h, --help     Print help\n'
+}
+
+session=default
+button=left
+action=
+x=
+y=
+button_set=false
+
+while (( $# > 0 )); do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --session|--button)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --session) session=$2 ;;
+                --button)
+                    button=$2
+                    button_set=true
+                    ;;
+            esac
+            shift
+            ;;
+        move|click)
+            if [[ -n $action ]]; then
+                usage >&2
+                exit 1
+            fi
+            action=$1
+            ;;
+        -*)
+            usage >&2
+            exit 1
+            ;;
+        *)
+            if [[ -z $x ]]; then
+                x=$1
+            elif [[ -z $y ]]; then
+                y=$1
+            else
+                usage >&2
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [[ -z $action || -z $x || -z $y ]]; then
+    usage >&2
+    exit 1
+fi
+if [[ ! $x =~ ^[0-9]+$ || ! $y =~ ^[0-9]+$ ]]; then
+    printf 'coordinates must be non-negative integers\n' >&2
+    exit 1
+fi
+if [[ $action == move && $button_set == true ]]; then
+    printf '%s\n' '--button is only valid with click' >&2
+    exit 1
+fi
+if [[ ! $button =~ ^(left|right|middle)$ ]]; then
+    printf 'invalid button: %s\n' "$button" >&2
+    exit 1
+fi
+
+command -v wlrctl >/dev/null || {
+    printf 'missing required command: wlrctl\n' >&2
+    exit 1
+}
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+
+export WAYLAND_DISPLAY=$VARDE_DEV_WAYLAND_DISPLAY
+
+# The virtual pointer reports relative motion only, so aiming at a coordinate
+# means asking the compositor where the cursor is and sending the difference.
+# A target it already sits on sends nothing at all, which is what makes a
+# click under a motionless pointer reproducible.
+read -r from_x from_y < <(
+    hyprctl -i "$VARDE_DEV_INSTANCE" -j cursorpos | jq -r '"\(.x) \(.y)"'
+)
+
+if (( x != from_x || y != from_y )); then
+    wlrctl pointer move $(( x - from_x )) $(( y - from_y ))
+    sleep 0.1
+fi
+
+if [[ $action == click ]]; then
+    wlrctl pointer click "$button"
+    sleep 0.2
+fi

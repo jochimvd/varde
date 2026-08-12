@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'Usage: %s [OPTIONS] color X Y\n' "$0"
+    printf '       %s [OPTIONS] bbox COLOR\n' "$0"
+    printf '       %s [--session ID] diff IMAGE IMAGE\n\n' "$0"
+    printf 'Arguments:\n'
+    printf '  X Y                Non-negative image coordinates\n'
+    printf '  COLOR              #RRGGBB or R,G,B\n'
+    printf '  IMAGE              Existing image path\n\n'
+    printf 'Options:\n'
+    printf '  --session ID       Target session [default: default]\n'
+    printf '  --file IMAGE       Measure an image instead of capturing the session\n'
+    printf '  --tolerance N      Bbox channel tolerance from 0 to 255 [default: 0]\n'
+    printf '  --region GEOMETRY  Bbox search region formatted as X,Y WxH\n'
+    printf '  -h, --help         Print help\n'
+    printf '\n--tolerance and --region apply only to bbox; --file applies to color and bbox.\n'
+}
+
+session=default
+file=
+tolerance=0
+region=
+action=
+args=()
+file_set=false
+tolerance_set=false
+region_set=false
+
+while (( $# > 0 )); do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --session|--file|--tolerance|--region)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --session)
+                    session=$2
+                    ;;
+                --file)
+                    file=$2
+                    file_set=true
+                    ;;
+                --tolerance)
+                    tolerance=$2
+                    tolerance_set=true
+                    ;;
+                --region)
+                    region=$2
+                    region_set=true
+                    ;;
+            esac
+            shift
+            ;;
+        color|bbox|diff)
+            if [[ -n $action ]]; then
+                usage >&2
+                exit 1
+            fi
+            action=$1
+            ;;
+        -*)
+            usage >&2
+            exit 1
+            ;;
+        *)
+            args+=("$1")
+            ;;
+    esac
+    shift
+done
+
+if [[ -z $action ]]; then
+    usage >&2
+    exit 1
+fi
+
+case $action in
+    color)
+        if (( ${#args[@]} != 2 )) || [[ $tolerance_set == true || $region_set == true ]]; then
+            usage >&2
+            exit 1
+        fi
+        if [[ ! ${args[0]} =~ ^[0-9]+$ || ! ${args[1]} =~ ^[0-9]+$ ]]; then
+            printf 'coordinates must be non-negative integers\n' >&2
+            exit 1
+        fi
+        ;;
+    bbox)
+        if (( ${#args[@]} != 1 )); then
+            usage >&2
+            exit 1
+        fi
+        if [[ ! $tolerance =~ ^[0-9]+$ ]] || (( tolerance > 255 )); then
+            printf 'tolerance must be an integer from 0 to 255\n' >&2
+            exit 1
+        fi
+        if [[ -n $region && ! $region =~ ^-?[0-9]+,-?[0-9]+\ [1-9][0-9]*x[1-9][0-9]*$ ]]; then
+            printf 'invalid region geometry: %s\n' "$region" >&2
+            exit 1
+        fi
+        ;;
+    diff)
+        if (( ${#args[@]} != 2 )) ||
+            [[ $file_set == true || $tolerance_set == true || $region_set == true ]]; then
+            usage >&2
+            exit 1
+        fi
+        ;;
+esac
+
+if [[ -n $file && ! -f $file ]]; then
+    printf 'image does not exist: %s\n' "$file" >&2
+    exit 1
+fi
+if [[ $action == diff ]]; then
+    for image in "${args[@]}"; do
+        if [[ ! -f $image ]]; then
+            printf 'image does not exist: %s\n' "$image" >&2
+            exit 1
+        fi
+    done
+fi
+
+varde_dev_select_session "$session"
+
+python3 -c 'import PIL' 2>/dev/null || {
+    printf 'missing required module: python-pillow\n' >&2
+    exit 1
+}
+
+if [[ $action != diff && -z $file ]]; then
+    command -v grim >/dev/null || {
+        printf 'missing required command: grim\n' >&2
+        exit 1
+    }
+    varde_dev_load_session
+    file=$(mktemp --suffix=.png)
+    trap 'rm -f -- "$file"' EXIT
+    WAYLAND_DISPLAY=$VARDE_DEV_WAYLAND_DISPLAY \
+        grim -o "$VARDE_DEV_OUTPUT" "$file"
+fi
+
+python3 - "$action" "$file" "$tolerance" "$region" "${args[@]}" <<'PY'
+import sys
+
+from PIL import Image, ImageChops
+
+action, file, tolerance, region, *args = sys.argv[1:]
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def open_image(path):
+    try:
+        return Image.open(path).convert('RGB')
+    except (OSError, ValueError) as error:
+        fail(f'cannot read image {path}: {error}')
+
+
+def parse_color(value):
+    try:
+        value = value.lstrip('#')
+        if ',' in value:
+            color = tuple(int(part) for part in value.split(','))
+            if len(color) != 3 or any(part < 0 or part > 255 for part in color):
+                raise ValueError
+            return color
+        if len(value) != 6:
+            raise ValueError
+        return tuple(int(value[at:at + 2], 16) for at in (0, 2, 4))
+    except ValueError:
+        fail(f'cannot read colour: {value}')
+
+
+def geometry(box):
+    left, top, right, bottom = box
+    return f'{right - left}x{bottom - top}+{left}+{top}'
+
+
+if action == 'color':
+    if len(args) != 2:
+        fail('color needs X and Y')
+    x, y = (int(arg) for arg in args)
+    image = open_image(file)
+    if x >= image.width or y >= image.height:
+        fail(f'coordinate is outside image: {x},{y}')
+    print('#%02X%02X%02X' % image.getpixel((x, y)))
+elif action == 'bbox':
+    if len(args) != 1:
+        fail('bbox needs a colour')
+    image = open_image(file)
+    offset = (0, 0)
+    if region:
+        position, _, size = region.partition(' ')
+        x, y = (int(part) for part in position.split(','))
+        width, height = (int(part) for part in size.lower().split('x'))
+        image = image.crop((x, y, x + width, y + height))
+        offset = (x, y)
+    limit = int(tolerance)
+    difference = ImageChops.difference(image, Image.new('RGB', image.size, parse_color(args[0])))
+    matches = [band.point(lambda value: 255 if value <= limit else 0) for band in difference.split()]
+    box = ImageChops.multiply(ImageChops.multiply(*matches[:2]), matches[2]).getbbox()
+    if box is None:
+        print('none')
+    else:
+        left, top, right, bottom = box
+        print(geometry((left + offset[0], top + offset[1], right + offset[0], bottom + offset[1])))
+elif action == 'diff':
+    if len(args) != 2:
+        fail('diff needs two images')
+    one = open_image(args[0])
+    two = open_image(args[1])
+    if one.size != two.size:
+        fail(f'images differ in size: {one.size} and {two.size}')
+    box = ImageChops.difference(one, two).getbbox()
+    print('identical' if box is None else geometry(box))
+PY

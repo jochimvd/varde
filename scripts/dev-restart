@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'Usage: %s [OPTIONS]\n\n' "$0"
+    printf 'Options:\n'
+    printf '  --session ID  Target session [default: default]\n'
+    printf '  --no-build    Restart the existing binary without building\n'
+    printf '  -h, --help    Print help\n'
+}
+
+session=default
+build=true
+
+while (( $# > 0 )); do
+    case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --session)
+            if (( $# < 2 )); then
+                printf 'missing value for --session\n' >&2
+                exit 1
+            fi
+            session=$2
+            shift
+            ;;
+        --no-build)
+            build=false
+            ;;
+        *)
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+
+if [[ $build == true ]]; then
+    build_args=()
+    if [[ $VARDE_DEV_PROFILE == release ]]; then
+        build_args+=(--release)
+    fi
+    cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
+fi
+
+session_pids() {
+    local pid
+    for pid in $(pgrep -x varde || true); do
+        if tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null |
+            grep -qxF "VARDE_DEV_APP_ID=$VARDE_DEV_APP_ID"; then
+            printf '%s\n' "$pid"
+        fi
+    done
+}
+
+mapfile -t old_pids < <(session_pids)
+if (( ${#old_pids[@]} > 0 )); then
+    kill "${old_pids[@]}" 2>/dev/null || true
+fi
+for _ in {1..50}; do
+    running=false
+    for pid in "${old_pids[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            running=true
+            break
+        fi
+    done
+    [[ $running == false ]] && break
+    sleep 0.1
+done
+for pid in "${old_pids[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+        printf 'Varde process %s did not stop\n' "$pid" >&2
+        exit 1
+    fi
+done
+
+hyprctl -i "$VARDE_DEV_INSTANCE" eval \
+    "hl.dispatch(hl.dsp.exec_cmd('$repo_dir/target/$VARDE_DEV_PROFILE/varde start'))" >/dev/null
+
+for _ in {1..100}; do
+    while read -r pid; do
+        if hyprctl -i "$VARDE_DEV_INSTANCE" -j layers |
+            jq -e --argjson pid "$pid" \
+                '[.. | objects | select(.namespace? == "varde" and .pid? == $pid)] | length > 0' \
+                >/dev/null; then
+            printf 'Restarted the shell in session %s.\n' "$session"
+            exit 0
+        fi
+    done < <(session_pids)
+    sleep 0.1
+done
+
+printf 'timed out waiting for the shell to come back up\n' >&2
+exit 1

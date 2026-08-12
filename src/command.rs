@@ -11,7 +11,7 @@ Commands:
   start          Start the desktop shell
   launcher       Toggle the application launcher
   clipboard      Toggle the clipboard launcher
-  notifications  Toggle the notification center
+  notifications  Manage notifications
   dmenu          Select a line read from standard input
   help           Print help for a command
 
@@ -28,9 +28,9 @@ Usage: varde launcher";
 const CLIPBOARD_HELP: &str = "Toggle the clipboard launcher
 
 Usage: varde clipboard";
-const NOTIFICATIONS_HELP: &str = "Toggle the notification center
+const NOTIFICATIONS_HELP: &str = "Manage notifications
 
-Usage: varde notifications";
+Usage: varde notifications [clear]";
 const DMENU_HELP: &str = "Select a line read from standard input
 
 Usage: varde dmenu [OPTIONS]
@@ -46,6 +46,7 @@ pub enum Request {
     Launcher,
     Clipboard,
     Notifications,
+    ClearNotifications,
     Dmenu { prompt: String },
 }
 
@@ -71,6 +72,9 @@ pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
         [command] if command == "launcher" => Ok(Request::Launcher),
         [command] if command == "clipboard" => Ok(Request::Clipboard),
         [command] if command == "notifications" => Ok(Request::Notifications),
+        [command, action] if command == "notifications" && action == "clear" => {
+            Ok(Request::ClearNotifications)
+        }
         [help_command, command] if help_command == "help" => help(command),
         [command, option] if option == "-h" || option == "--help" => help(command),
         [command, options @ ..] if command == "dmenu" => parse_dmenu(options),
@@ -157,6 +161,10 @@ mod tests {
         assert!(matches!(
             parse(&args(&["notifications"])),
             Ok(Request::Notifications)
+        ));
+        assert!(matches!(
+            parse(&args(&["notifications", "clear"])),
+            Ok(Request::ClearNotifications)
         ));
     }
 

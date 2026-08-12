@@ -5,9 +5,20 @@ repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # shellcheck source=dev-common
 source "$repo_dir/scripts/dev-common"
 
+usage() {
+    printf 'Usage: %s [OPTIONS]\n\n' "$0"
+    printf 'Options:\n'
+    printf '  --session ID  Target session [default: default]\n'
+    printf '  -h, --help    Print help\n'
+}
+
 session=default
 while (( $# > 0 )); do
     case $1 in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --session)
             if (( $# < 2 )); then
                 printf 'missing value for --session\n' >&2
@@ -17,7 +28,7 @@ while (( $# > 0 )); do
             shift
             ;;
         *)
-            printf 'usage: %s [--session ID]\n' "$0" >&2
+            usage >&2
             exit 1
             ;;
     esac

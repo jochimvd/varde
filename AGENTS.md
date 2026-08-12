@@ -14,15 +14,10 @@ This project is a custom desktop shell for Hyprland on Arch Linux, written in Ru
   development session ID, such as their agent or task name. Create worktrees as
   siblings of the main checkout, named `varde-wt-<session-id>`, on a branch
   named `<session-id>`. Choose a short, descriptive ID that says what the work
-  does, and use that same ID with `--session ID` for
-  `scripts/dev-session`, `scripts/dev-show`, `scripts/dev-inspect`, and
-  `scripts/dev-screenshot`. Never use the commands' implicit `default` session;
-  it is reserved for manual development.
-- To control a running nested session, load its metadata and dispatch Lua to its
-  compositor: `source "$XDG_RUNTIME_DIR/varde-dev/<session-id>/session"`, then
-  `hyprctl -i "$VARDE_DEV_INSTANCE" eval 'hl.dispatch(hl.dsp.<action>(...))'`.
-  Move/hover with `hl.dispatch(hl.dsp.cursor.move({ x = 640, y = 360 }))`.
-  Left-click with `hl.dispatch(hl.dsp.send_key_state({ mods = "", key =
-  "mouse:272", state = "down" }))`, then the same action with `state = "up"`.
-  See the [Hyprland dispatchers](https://wiki.hypr.land/Configuring/Basics/Dispatchers/)
-  for other actions.
+  does, and use that same ID with `--session ID` for every `scripts/dev-*`
+  command. Never use the commands' implicit `default` session; it is reserved
+  for manual development.
+- `docs/development.md` covers the nested development session: starting one,
+  restarting the shell after an edit, driving it with notifications and the
+  pointer, and measuring what it drew. Read it before driving a session by
+  hand.
