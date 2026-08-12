@@ -508,31 +508,9 @@ window.notification-popups {
     padding: 0;
 }
 
-listview.notification-center-list,
-listview.notification-center-list > row {
-    padding: 0;
-    background: transparent;
-}
-
-.notification-center-item {
-    background: @overlay_subtle_color;
-}
-
-.notification-center-item.notification-group-start {
-    margin-top: 8px;
-    border-radius: 6px 6px 0 0;
-}
-
-.notification-center-item.notification-group-collapsed {
+.notification-group {
     border-radius: 6px;
-}
-
-listview.notification-center-list > row:first-child .notification-group-start {
-    margin-top: 0;
-}
-
-.notification-center-item.notification-group-end {
-    border-radius: 0 0 6px 6px;
+    background: @overlay_subtle_color;
 }
 
 .notification-group-header {
@@ -593,11 +571,10 @@ listview.notification-center-list > row:first-child .notification-group-start {
 }
 
 .notification-row.critical {
-    border-left: 2px solid @critical_color;
-}
-
-.notification-center-item.notification-group-end .notification-row.critical {
-    border-bottom-left-radius: 6px;
+    /* Painted over the margin the surface already leaves, so the accent costs
+       no layout space and every row keeps the same content position. A border
+       would instead mitre into the separator and cut its own top edge. */
+    box-shadow: inset 2px 0 0 @critical_color;
 }
 
 .notification-summary {
@@ -625,6 +602,11 @@ listview.notification-center-list > row:first-child .notification-group-start {
 .notification-body {
     margin-top: 2px;
     color: @text_secondary_color;
+}
+
+/* Continues the body text, so it must not repeat the gap above it. */
+.notification-body.overflow {
+    margin-top: 0;
 }
 
 .notification-actions {
