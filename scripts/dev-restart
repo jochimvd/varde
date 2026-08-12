@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+session=default
+build=true
+
+while (( $# > 0 )); do
+    case $1 in
+        --session)
+            if (( $# < 2 )); then
+                printf 'missing value for --session\n' >&2
+                exit 1
+            fi
+            session=$2
+            shift
+            ;;
+        --no-build)
+            build=false
+            ;;
+        *)
+            printf 'usage: %s [--session ID] [--no-build]\n' "$0" >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+
+if [[ $build == true ]]; then
+    build_args=()
+    if [[ $VARDE_DEV_PROFILE == release ]]; then
+        build_args+=(--release)
+    fi
+    cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
+fi
+
+for pid in $(pgrep -x varde || true); do
+    if tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null |
+        grep -qxF "VARDE_DEV_APP_ID=$VARDE_DEV_APP_ID"; then
+        kill "$pid" 2>/dev/null || true
+        for _ in {1..50}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+    fi
+done
+
+hyprctl -i "$VARDE_DEV_INSTANCE" eval \
+    "hl.dispatch(hl.dsp.exec_cmd('$repo_dir/target/$VARDE_DEV_PROFILE/varde'))" >/dev/null
+
+for _ in {1..100}; do
+    if hyprctl -i "$VARDE_DEV_INSTANCE" -j layers |
+        jq -e '[.. | .namespace? | select(. == "varde")] | length > 0' >/dev/null; then
+        printf 'Restarted the shell in session %s.\n' "$session"
+        exit 0
+    fi
+    sleep 0.1
+done
+
+printf 'timed out waiting for the shell to come back up\n' >&2
+exit 1

@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'usage: %s [--session ID] [--app NAME] [--icon NAME] [--actions LIST]\n' "$0" >&2
+    printf '           [--hints DICT] [--replaces ID] SUMMARY [BODY]\n' >&2
+    printf '       %s [--session ID] --close ID\n' "$0" >&2
+    printf '       %s [--session ID] --clear\n' "$0" >&2
+    exit 1
+}
+
+session=default
+app='Dev'
+icon='dialog-information'
+actions='[]'
+hints="{'urgency': <byte 1>}"
+replaces=0
+close=
+clear=false
+summary=
+body=
+
+while (( $# > 0 )); do
+    case $1 in
+        --session|--app|--icon|--actions|--hints|--replaces|--close)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --session) session=$2 ;;
+                --app) app=$2 ;;
+                --icon) icon=$2 ;;
+                --actions) actions=$2 ;;
+                --hints) hints=$2 ;;
+                --replaces) replaces=$2 ;;
+                --close) close=$2 ;;
+            esac
+            shift
+            ;;
+        --clear)
+            clear=true
+            ;;
+        -*)
+            usage
+            ;;
+        *)
+            if [[ -z $summary ]]; then
+                summary=$1
+            elif [[ -z $body ]]; then
+                body=$1
+            else
+                usage
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [[ -z $close && $clear == false && -z $summary ]]; then
+    usage
+fi
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+
+call() {
+    local method=$1
+    shift
+    gdbus call --address "$VARDE_DEV_DBUS_ADDRESS" \
+        --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method "org.freedesktop.Notifications.$method" "$@"
+}
+
+if [[ -n $close ]]; then
+    call CloseNotification "$close" >/dev/null
+    exit 0
+fi
+
+# The daemon hands out ids from one, so closing a generous range clears a
+# development session without having to track what it sent.
+if [[ $clear == true ]]; then
+    for id in $(seq 1 "${VARDE_DEV_CLEAR_LIMIT:-64}"); do
+        call CloseNotification "$id" >/dev/null 2>&1 || true
+    done
+    exit 0
+fi
+
+reply=$(call Notify -- "$app" "$replaces" "$icon" "$summary" "$body" "$actions" "$hints" 0)
+if [[ $reply =~ uint32\ ([0-9]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+else
+    printf 'unexpected Notify response: %s\n' "$reply" >&2
+    exit 1
+fi

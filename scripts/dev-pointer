@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+# Warping the cursor does not deliver anything to the client: it learns the new
+# position only from a button event, and it acts on that event before taking
+# the new position in. A click therefore needs two presses, the first of which
+# lands wherever the pointer was before. A bare move stays a warp for that
+# reason: the shell does not notice it, but nothing is clicked either.
+
+usage() {
+    printf 'usage: %s [--session ID] move|click X Y [--button left|right]\n' "$0" >&2
+    exit 1
+}
+
+session=default
+button=left
+action=
+x=
+y=
+
+while (( $# > 0 )); do
+    case $1 in
+        --session)
+            if (( $# < 2 )); then
+                printf 'missing value for --session\n' >&2
+                exit 1
+            fi
+            session=$2
+            shift
+            ;;
+        --button)
+            if (( $# < 2 )); then
+                printf 'missing value for --button\n' >&2
+                exit 1
+            fi
+            button=$2
+            shift
+            ;;
+        move|click)
+            action=$1
+            ;;
+        *)
+            if [[ -z $x ]]; then
+                x=$1
+            elif [[ -z $y ]]; then
+                y=$1
+            else
+                usage
+            fi
+            ;;
+    esac
+    shift
+done
+
+if [[ -z $action || -z $x || -z $y ]]; then
+    usage
+fi
+
+case $button in
+    left) code=272 ;;
+    right) code=273 ;;
+    middle) code=274 ;;
+    *)
+        printf 'unknown button: %s (expected left, right or middle)\n' "$button" >&2
+        exit 1
+        ;;
+esac
+
+varde_dev_select_session "$session"
+varde_dev_load_session
+
+dispatch() {
+    hyprctl -i "$VARDE_DEV_INSTANCE" eval "hl.dispatch($1)" >/dev/null
+}
+
+tap() {
+    dispatch "hl.dsp.send_key_state({ mods = '', key = 'mouse:$1', state = 'down' })"
+    sleep 0.05
+    dispatch "hl.dsp.send_key_state({ mods = '', key = 'mouse:$1', state = 'up' })"
+    sleep 0.25
+}
+
+dispatch "hl.dsp.cursor.move({ x = $x, y = $y })"
+sleep 0.2
+
+if [[ $action == click ]]; then
+    tap "$code"
+    tap "$code"
+fi

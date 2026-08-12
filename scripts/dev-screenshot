@@ -7,8 +7,25 @@ source "$repo_dir/scripts/dev-common"
 
 session=default
 output_file=
+pointer=true
+crop=
+zoom=
 while (( $# > 0 )); do
     case $1 in
+        --no-pointer)
+            pointer=false
+            ;;
+        --crop|--zoom)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --crop) crop=$2 ;;
+                --zoom) zoom=$2 ;;
+            esac
+            shift
+            ;;
         --session)
             if (( $# < 2 )); then
                 printf 'missing value for --session\n' >&2
@@ -20,19 +37,19 @@ while (( $# > 0 )); do
         --)
             shift
             if (( $# != 1 )) || [[ -n $output_file ]]; then
-                printf 'usage: %s [--session ID] [OUTPUT]\n' "$0" >&2
+                printf 'usage: %s [--session ID] [--no-pointer] [--crop GEOMETRY] [--zoom N] [OUTPUT]\n' "$0" >&2
                 exit 1
             fi
             output_file=$1
             break
             ;;
         -*)
-            printf 'usage: %s [--session ID] [OUTPUT]\n' "$0" >&2
+            printf 'usage: %s [--session ID] [--no-pointer] [--crop GEOMETRY] [--zoom N] [OUTPUT]\n' "$0" >&2
             exit 1
             ;;
         *)
             if [[ -n $output_file ]]; then
-                printf 'usage: %s [--session ID] [OUTPUT]\n' "$0" >&2
+                printf 'usage: %s [--session ID] [--no-pointer] [--crop GEOMETRY] [--zoom N] [OUTPUT]\n' "$0" >&2
                 exit 1
             fi
             output_file=$1
@@ -52,8 +69,22 @@ command -v grim >/dev/null || {
 varde_dev_load_session
 
 mkdir -p "$(dirname -- "$output_file")"
+grim_args=()
+if [[ $pointer == true ]]; then
+    grim_args+=(-c)
+fi
+if [[ -n $crop ]]; then
+    grim_args+=(-g "$crop")
+else
+    grim_args+=(-o "$VARDE_DEV_OUTPUT")
+fi
 WAYLAND_DISPLAY=$VARDE_DEV_WAYLAND_DISPLAY \
 HYPRLAND_INSTANCE_SIGNATURE=$VARDE_DEV_INSTANCE \
-    grim -o "$VARDE_DEV_OUTPUT" "$output_file"
+    grim "${grim_args[@]}" "$output_file"
+
+# Nearest neighbour keeps single pixels readable when the image is looked at.
+if [[ -n $zoom ]]; then
+    magick "$output_file" -filter point -resize "$((zoom * 100))%" "$output_file"
+fi
 
 printf '%s\n' "$output_file"

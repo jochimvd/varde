@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-common
+source "$repo_dir/scripts/dev-common"
+
+usage() {
+    printf 'usage: %s [--session ID] [--file IMAGE] color X Y\n' "$0" >&2
+    printf '       %s [--session ID] [--file IMAGE] bbox COLOR [--tolerance N]' "$0" >&2
+    printf ' [--region GEOMETRY]\n' >&2
+    printf '       %s diff IMAGE IMAGE\n' "$0" >&2
+    exit 1
+}
+
+session=default
+file=
+tolerance=0
+region=
+action=
+args=()
+
+while (( $# > 0 )); do
+    case $1 in
+        --session|--file|--tolerance|--region)
+            if (( $# < 2 )); then
+                printf 'missing value for %s\n' "$1" >&2
+                exit 1
+            fi
+            case $1 in
+                --session) session=$2 ;;
+                --file) file=$2 ;;
+                --tolerance) tolerance=$2 ;;
+                --region) region=$2 ;;
+            esac
+            shift
+            ;;
+        color|bbox|diff)
+            action=$1
+            ;;
+        -*)
+            usage
+            ;;
+        *)
+            args+=("$1")
+            ;;
+    esac
+    shift
+done
+
+[[ -n $action ]] || usage
+
+python3 -c 'import PIL' 2>/dev/null || {
+    printf 'missing required module: python-pillow\n' >&2
+    exit 1
+}
+
+if [[ $action != diff && -z $file ]]; then
+    varde_dev_select_session "$session"
+    varde_dev_load_session
+    file=$(mktemp --suffix=.png)
+    trap 'rm -f -- "$file"' EXIT
+    WAYLAND_DISPLAY=$VARDE_DEV_WAYLAND_DISPLAY \
+        grim -o "$VARDE_DEV_OUTPUT" "$file"
+fi
+
+python3 - "$action" "$file" "$tolerance" "$region" "${args[@]}" <<'PY'
+import sys
+
+from PIL import Image, ImageChops
+
+action, file, tolerance, region, *args = sys.argv[1:]
+
+
+def fail(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def parse_color(value):
+    value = value.lstrip('#')
+    if ',' in value:
+        return tuple(int(part) for part in value.split(','))
+    if len(value) != 6:
+        fail(f'cannot read colour: {value}')
+    return tuple(int(value[at:at + 2], 16) for at in (0, 2, 4))
+
+
+def geometry(box):
+    left, top, right, bottom = box
+    return f'{right - left}x{bottom - top}+{left}+{top}'
+
+
+if action == 'color':
+    if len(args) != 2:
+        fail('color needs X and Y')
+    x, y = (int(arg) for arg in args)
+    print('#%02X%02X%02X' % Image.open(file).convert('RGB').getpixel((x, y)))
+elif action == 'bbox':
+    if len(args) != 1:
+        fail('bbox needs a colour')
+    image = Image.open(file).convert('RGB')
+    offset = (0, 0)
+    if region:
+        position, _, size = region.partition(' ')
+        x, y = (int(part) for part in position.split(','))
+        width, height = (int(part) for part in size.lower().split('x'))
+        image = image.crop((x, y, x + width, y + height))
+        offset = (x, y)
+    limit = int(tolerance)
+    difference = ImageChops.difference(image, Image.new('RGB', image.size, parse_color(args[0])))
+    matches = [band.point(lambda value: 255 if value <= limit else 0) for band in difference.split()]
+    box = ImageChops.multiply(ImageChops.multiply(*matches[:2]), matches[2]).getbbox()
+    if box is None:
+        print('none')
+    else:
+        left, top, right, bottom = box
+        print(geometry((left + offset[0], top + offset[1], right + offset[0], bottom + offset[1])))
+elif action == 'diff':
+    if len(args) != 2:
+        fail('diff needs two images')
+    one = Image.open(args[0]).convert('RGB')
+    two = Image.open(args[1]).convert('RGB')
+    if one.size != two.size:
+        fail(f'images differ in size: {one.size} and {two.size}')
+    box = ImageChops.difference(one, two).getbbox()
+    print('identical' if box is None else geometry(box))
+PY

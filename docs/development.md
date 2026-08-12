@@ -44,8 +44,12 @@ ID to every development command:
 
 ```sh
 scripts/dev-session --session agent-1
-scripts/dev-inspect --session agent-1
+scripts/dev-restart --session agent-1
+scripts/dev-notify --session agent-1 'Summary' 'Body'
+scripts/dev-pointer --session agent-1 click 640 360
 scripts/dev-screenshot --session agent-1
+scripts/dev-measure --session agent-1 color 640 360
+scripts/dev-inspect --session agent-1
 scripts/dev-show --session agent-1 --focus
 ```
 
@@ -81,10 +85,92 @@ Capture only its virtual output:
 ```sh
 scripts/dev-screenshot
 scripts/dev-screenshot target/dev/another-name.png
+scripts/dev-screenshot --no-pointer
+scripts/dev-screenshot --crop '1180,106 76x38' --zoom 6
 ```
 
 The default session image is `target/dev/default/screenshot.png`. `grim` is
-explicitly granted the nested session's `screencopy` permission.
+explicitly granted the nested session's `screencopy` permission. Captures
+include the pointer, which is how a cursor shape can be checked; `--no-pointer`
+leaves it out. `--crop` takes a `X,Y WxH` region of the output and `--zoom`
+scales the result without smoothing, which keeps single pixels legible.
+
+Measure what was drawn instead of eyeballing it. `color` and `bbox` capture the
+session unless `--file` names an image; `bbox` reports where a colour appears,
+which is how a panel or a widget is located, and `--region` keeps the search
+away from anything else painted in the same colour:
+
+```sh
+scripts/dev-measure color 1228 123
+scripts/dev-measure bbox '#3b3c3e' --region '600,40 680x680'
+scripts/dev-measure bbox '#9ece6a' --tolerance 8
+scripts/dev-measure diff before.png after.png
+```
+
+`color` prints `#RRGGBB`, `bbox` and `diff` print `WxH+X+Y`, and `diff` prints
+`identical` when two captures match, which answers whether a click did
+anything.
+
+A widget that paints no background of its own still measures if it is given a
+temporary colour in `src/style.css` and reverted afterwards: `bbox` then
+reports its box, and the insets around whatever it contains settle questions
+about alignment and padding that are otherwise guessed at.
+
+## Drive a session
+
+Code and the stylesheet are both compiled into the binary, so an edit reaches a
+session only through a rebuild and a restart of the shell. `dev-restart` does
+both in well under a second and leaves the compositor, its workspace and its
+window alone, which restarting the session does not; state held in the shell,
+such as stored notifications, is lost either way:
+
+```sh
+scripts/dev-restart
+scripts/dev-restart --no-build
+```
+
+Send, close and clear notifications on the session's private bus:
+
+```sh
+scripts/dev-notify 'Summary' 'Body'
+scripts/dev-notify --app Chat --actions "['default','Open','reply','Reply']" 'Summary' 'Body'
+scripts/dev-notify --hints "{'urgency': <byte 2>}" 'Critical'
+scripts/dev-notify --close 3
+scripts/dev-notify --clear
+```
+
+`scripts/dev-notification-tests` remains the interactive walkthrough of the
+notification protocol. It waits for a keypress before each step, so reach for
+`dev-notify` when a session just needs filling.
+
+Move the pointer and click:
+
+```sh
+scripts/dev-pointer move 640 360
+scripts/dev-pointer click 1228 123
+scripts/dev-pointer click 900 200 --button right
+```
+
+Warping the cursor does not deliver anything to the client, which learns the
+pointer position only from a button event and acts on that event before taking
+the new position in. `move` is therefore a warp and nothing else: the shell
+does not notice it, so hovering does not light up until something is clicked.
+`click` sends two presses for the same reason, the first being spent on the
+stale position, and lands exactly one click on the target. A click is still
+swallowed now and then, so capture the output to see what happened rather than
+assuming, and click again if nothing did. None of this happens with real input,
+so a click that misbehaves here is the harness rather than the shell.
+
+Anything the scripts do not cover can be dispatched to the nested compositor
+directly. Load the session's metadata, then evaluate Lua against its instance:
+
+```sh
+source "$XDG_RUNTIME_DIR/varde-dev/<session-id>/session"
+hyprctl -i "$VARDE_DEV_INSTANCE" eval 'hl.dispatch(hl.dsp.<action>(...))'
+```
+
+The [Hyprland dispatchers](https://wiki.hypr.land/Configuring/Basics/Dispatchers/)
+list the available actions.
 
 ## Checks
 
