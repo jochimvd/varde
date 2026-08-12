@@ -5,7 +5,7 @@ use std::{
 
 use gtk::prelude::*;
 
-use crate::notifications::{Manager, model::Group, view::common::application};
+use crate::notifications::{Manager, model::Group, state::Urgency, view::common::application};
 
 use super::{
     CHEVRON_DOWN, CHEVRON_UP, REVEAL_DURATION, Seen,
@@ -97,6 +97,7 @@ impl GroupView {
             .build();
         let has_fresh = Rc::new(Cell::new(false));
         disclosure.connect_clicked({
+            let container = container.clone();
             let revealer = revealer.clone();
             let chevron = chevron.clone();
             let fresh = fresh.clone();
@@ -107,6 +108,11 @@ impl GroupView {
                 revealer.set_reveal_child(expanded);
                 chevron.set_label(if expanded { CHEVRON_UP } else { CHEVRON_DOWN });
                 fresh.set_visible(has_fresh.get() && !expanded);
+                if expanded {
+                    container.remove_css_class("collapsed");
+                } else {
+                    container.add_css_class("collapsed");
+                }
                 on_expansion();
             }
         });
@@ -195,6 +201,15 @@ impl GroupView {
         }
         self.rows.replace(rows);
         // A collapsed group hides its rows, so the header carries their mark.
+        let critical = group
+            .notifications
+            .iter()
+            .any(|notification| notification.urgency == Urgency::Critical);
+        if critical {
+            self.container.add_css_class("critical");
+        } else {
+            self.container.remove_css_class("critical");
+        }
         self.has_fresh.set(fresh);
         self.fresh
             .set_visible(fresh && !self.revealer.reveals_child());

@@ -514,9 +514,11 @@ window.notification-popups {
 }
 
 .notification-group-header {
-    margin: 2px;
     min-height: 34px;
-    padding-left: 6px;
+    padding-top: 2px;
+    padding-right: 2px;
+    padding-bottom: 2px;
+    padding-left: 8px;
     font-weight: bold;
 }
 
@@ -574,7 +576,8 @@ window.notification-popups {
     border-radius: 6px;
 }
 
-.notification-row.critical {
+.notification-row.critical,
+.notification-group.critical.collapsed .notification-group-header {
     /* An overlay, so it costs no layout and never mitres into the separator. */
     box-shadow: inset 2px 0 0 @critical_color;
 }
@@ -593,6 +596,10 @@ window.notification-popups {
     min-height: 6px;
     border-radius: 3px;
     background: @accent_color;
+}
+
+.notification-row-fresh {
+    transform: translate(0, -1px);
 }
 
 .notification-resident {
