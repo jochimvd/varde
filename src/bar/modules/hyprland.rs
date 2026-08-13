@@ -48,9 +48,20 @@ pub fn widget() -> gtk::Box {
     background::spawn("hyprland-events", move || {
         run_worker(updates_tx, commands_rx)
     });
+    let mut state = State::default();
     background::listen(updates_rx, move |update| match update {
-        Update::State(state) => render(&workspaces, &window, &state, &commands_tx),
-        Update::Title(title) => window.set_label(&title),
+        Update::State(next) => {
+            render(&workspaces, &window, &state, &next, &commands_tx);
+            state = next;
+        }
+        Update::ActiveWorkspace(id) => {
+            state.active_id = Some(id);
+            update_workspace_classes(&workspaces, &state);
+        }
+        Update::Title(title) => {
+            state.title = title;
+            window.set_label(&state.title);
+        }
     });
 
     root
@@ -72,6 +83,7 @@ struct Workspace {
 
 enum Update {
     State(State),
+    ActiveWorkspace(i64),
     Title(String),
 }
 
@@ -144,6 +156,7 @@ enum Command {
 #[derive(Debug, Eq, PartialEq)]
 enum Event {
     Refresh,
+    Workspace(i64),
     ActiveWindow(Option<String>),
     Title { address: String, title: String },
     Ignore,
@@ -155,7 +168,25 @@ enum WorkspaceSelector {
     Name(String),
 }
 
-fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &Sender<Command>) {
+fn render(
+    workspaces: &gtk::Box,
+    window: &gtk::Label,
+    current: &State,
+    next: &State,
+    commands: &Sender<Command>,
+) {
+    if workspace_structure_changed(current, next) {
+        rebuild_workspaces(workspaces, next, commands);
+    } else if current.active_id != next.active_id || current.workspaces != next.workspaces {
+        update_workspace_classes(workspaces, next);
+    }
+
+    if current.title != next.title {
+        window.set_label(&next.title);
+    }
+}
+
+fn rebuild_workspaces(workspaces: &gtk::Box, state: &State, commands: &Sender<Command>) {
     while let Some(child) = workspaces.first_child() {
         workspaces.remove(&child);
     }
@@ -181,8 +212,39 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &
         });
         workspaces.append(&button);
     }
+}
 
-    window.set_label(&state.title);
+fn update_workspace_classes(workspaces: &gtk::Box, state: &State) {
+    let mut child = workspaces.first_child();
+    for workspace in &state.workspaces {
+        let Some(widget) = child else {
+            return;
+        };
+        child = widget.next_sibling();
+        let Ok(button) = widget.downcast::<gtk::Button>() else {
+            return;
+        };
+
+        if state.active_id == Some(workspace.id) {
+            button.add_css_class("active");
+        } else {
+            button.remove_css_class("active");
+        }
+        if workspace.urgent {
+            button.add_css_class("urgent");
+        } else {
+            button.remove_css_class("urgent");
+        }
+    }
+}
+
+fn workspace_structure_changed(current: &State, next: &State) -> bool {
+    current.workspaces.len() != next.workspaces.len()
+        || current
+            .workspaces
+            .iter()
+            .zip(&next.workspaces)
+            .any(|(current, next)| current.id != next.id || current.name != next.name)
 }
 
 fn run_worker(updates: async_channel::Sender<Update>, commands: Receiver<Command>) {
@@ -221,7 +283,9 @@ fn run_worker(updates: async_channel::Sender<Update>, commands: Receiver<Command
                 Ok(_) => {
                     if line.ends_with(b"\n") {
                         let event = parse_event(&String::from_utf8_lossy(&line));
-                        if event_needs_refresh(&event, active_address.as_deref()) {
+                        if let Event::Workspace(id) = &event {
+                            let _ = updates.send_blocking(Update::ActiveWorkspace(*id));
+                        } else if event_needs_refresh(&event, active_address.as_deref()) {
                             title_updates.clear();
                             if let Ok(address) = refresh(&updates) {
                                 active_address = address;
@@ -354,6 +418,11 @@ fn parse_event(line: &str) -> Event {
     };
 
     match event {
+        "workspacev2" => data
+            .split_once(',')
+            .and_then(|(id, _)| id.parse().ok())
+            .map(Event::Workspace)
+            .unwrap_or(Event::Ignore),
         "activewindowv2" => Event::ActiveWindow(normalize_address(data)),
         "windowtitlev2" => {
             let Some((address, title)) = data.split_once(',') else {
@@ -367,10 +436,8 @@ fn parse_event(line: &str) -> Event {
                 title: title.into(),
             }
         }
-        "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" | "createworkspace"
-        | "createworkspacev2" | "destroyworkspace" | "destroyworkspacev2" | "moveworkspace"
-        | "moveworkspacev2" | "renameworkspace" | "openwindow" | "closewindow" | "movewindow"
-        | "movewindowv2" | "urgent" => Event::Refresh,
+        "focusedmonv2" | "createworkspacev2" | "destroyworkspacev2" | "moveworkspacev2"
+        | "renameworkspace" | "closewindow" | "movewindowv2" | "urgent" => Event::Refresh,
         _ => Event::Ignore,
     }
 }
@@ -388,7 +455,7 @@ fn event_needs_refresh(event: &Event, active_address: Option<&str>) -> bool {
     match event {
         Event::Refresh => true,
         Event::ActiveWindow(address) => address.as_deref() != active_address,
-        Event::Title { .. } | Event::Ignore => false,
+        Event::Workspace(_) | Event::Title { .. } | Event::Ignore => false,
     }
 }
 
@@ -450,7 +517,11 @@ mod tests {
         );
         assert_eq!(parse_event("activewindowv2>>"), Event::ActiveWindow(None));
         assert_eq!(parse_event("activewindow>>class,title"), Event::Ignore);
-        assert_eq!(parse_event("workspacev2>>2,2"), Event::Refresh);
+        assert_eq!(parse_event("workspacev2>>2,2"), Event::Workspace(2));
+        assert_eq!(parse_event("workspacev2>>invalid,2"), Event::Ignore);
+        assert_eq!(parse_event("workspace>>2"), Event::Ignore);
+        assert_eq!(parse_event("focusedmonv2>>DP-1,2"), Event::Refresh);
+        assert_eq!(parse_event("focusedmon>>DP-1,2"), Event::Ignore);
         assert_eq!(parse_event("urgent>>0x123"), Event::Refresh);
         assert_eq!(parse_event("configreloaded>>"), Event::Ignore);
         assert_eq!(parse_event("windowtitle>>0x123"), Event::Ignore);
@@ -524,6 +595,27 @@ mod tests {
         titles.queue("new window".into());
 
         assert_eq!(titles.take_ready(start), Some("new window".into()));
+    }
+
+    #[test]
+    fn workspace_state_only_rebuilds_for_identity_or_name_changes() {
+        let state = State {
+            workspaces: vec![Workspace {
+                id: 1,
+                name: "1".into(),
+                urgent: false,
+            }],
+            active_id: Some(1),
+            title: "one".into(),
+        };
+        let mut changed = state.clone();
+        changed.active_id = Some(2);
+        changed.workspaces[0].urgent = true;
+        changed.title = "two".into();
+        assert!(!workspace_structure_changed(&state, &changed));
+
+        changed.workspaces[0].name = "renamed".into();
+        assert!(workspace_structure_changed(&state, &changed));
     }
 
     #[test]
