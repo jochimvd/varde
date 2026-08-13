@@ -5,7 +5,7 @@ use std::{
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, Sender},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use gtk::prelude::*;
@@ -15,6 +15,7 @@ use serde::de::DeserializeOwned;
 use crate::background;
 
 const IPC_TIMEOUT: Duration = Duration::from_secs(2);
+const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 
 pub fn widget() -> gtk::Box {
     let root = gtk::Box::builder()
@@ -47,8 +48,9 @@ pub fn widget() -> gtk::Box {
     background::spawn("hyprland-events", move || {
         run_worker(updates_tx, commands_rx)
     });
-    background::listen(updates_rx, move |state| {
-        render(&workspaces, &window, &state, &commands_tx);
+    background::listen(updates_rx, move |update| match update {
+        Update::State(state) => render(&workspaces, &window, &state, &commands_tx),
+        Update::Title(title) => window.set_label(&title),
     });
 
     root
@@ -68,6 +70,40 @@ struct Workspace {
     urgent: bool,
 }
 
+enum Update {
+    State(State),
+    Title(String),
+}
+
+#[derive(Default)]
+struct TitleUpdates {
+    pending: Option<String>,
+    last_sent: Option<Instant>,
+}
+
+impl TitleUpdates {
+    fn queue(&mut self, title: String) {
+        self.pending = Some(title);
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    fn take_ready(&mut self, now: Instant) -> Option<String> {
+        if self
+            .last_sent
+            .is_some_and(|last_sent| now.duration_since(last_sent) < TITLE_UPDATE_INTERVAL)
+        {
+            return None;
+        }
+
+        let title = self.pending.take()?;
+        self.last_sent = Some(now);
+        Some(title)
+    }
+}
+
 #[derive(Deserialize)]
 struct WorkspaceInfo {
     id: i64,
@@ -83,6 +119,8 @@ struct ActiveWorkspace {
 
 #[derive(Default, Deserialize)]
 struct ActiveWindow {
+    #[serde(default)]
+    address: String,
     #[serde(default)]
     title: String,
 }
@@ -101,6 +139,14 @@ struct ClientWorkspace {
 
 enum Command {
     Activate(WorkspaceSelector),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Event {
+    Refresh,
+    ActiveWindow(Option<String>),
+    Title { address: String, title: String },
+    Ignore,
 }
 
 #[derive(Clone)]
@@ -139,9 +185,10 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, state: &State, commands: &
     window.set_label(&state.title);
 }
 
-fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>) {
+fn run_worker(updates: async_channel::Sender<Update>, commands: Receiver<Command>) {
     loop {
-        refresh(&updates);
+        let mut title_updates = TitleUpdates::default();
+        let mut active_address = refresh(&updates).unwrap_or_default();
 
         let Ok((request_socket, event_socket)) = socket_paths() else {
             std::thread::sleep(background::RETRY_DELAY);
@@ -159,6 +206,8 @@ fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>
         // across reads instead of being handled as an event of its own.
         let mut line = Vec::new();
         loop {
+            send_ready_title(&updates, &mut title_updates);
+
             while let Ok(command) = commands.try_recv() {
                 match command {
                     Command::Activate(selector) => {
@@ -171,8 +220,17 @@ fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>
                 Ok(0) => break,
                 Ok(_) => {
                     if line.ends_with(b"\n") {
-                        if event_needs_refresh(&String::from_utf8_lossy(&line)) {
-                            refresh(&updates);
+                        let event = parse_event(&String::from_utf8_lossy(&line));
+                        if event_needs_refresh(&event, active_address.as_deref()) {
+                            title_updates.clear();
+                            if let Ok(address) = refresh(&updates) {
+                                active_address = address;
+                            }
+                        } else if let Event::Title { address, title } = event
+                            && is_active_address(&address, active_address.as_deref())
+                        {
+                            title_updates.queue(title);
+                            send_ready_title(&updates, &mut title_updates);
                         }
                         line.clear();
                     }
@@ -188,27 +246,23 @@ fn run_worker(updates: async_channel::Sender<State>, commands: Receiver<Command>
     }
 }
 
-fn refresh(updates: &async_channel::Sender<State>) {
-    let Ok((request_socket, _)) = socket_paths() else {
-        return;
-    };
-
-    let state: io::Result<State> = (|| {
-        let workspaces = request_json(&request_socket, "j/workspaces")?;
-        let active_workspace = request_json(&request_socket, "j/activeworkspace")?;
-        let active_window = request_json(&request_socket, "j/activewindow")?;
-        let clients = request_json(&request_socket, "j/clients")?;
-        Ok(state_from_parts(
-            workspaces,
-            active_workspace,
-            active_window,
-            clients,
-        ))
-    })();
-
-    if let Ok(state) = state {
-        let _ = updates.send_blocking(state);
+fn send_ready_title(updates: &async_channel::Sender<Update>, titles: &mut TitleUpdates) {
+    if let Some(title) = titles.take_ready(Instant::now()) {
+        let _ = updates.send_blocking(Update::Title(title));
     }
+}
+
+fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>> {
+    let (request_socket, _) = socket_paths()?;
+    let workspaces = request_json(&request_socket, "j/workspaces")?;
+    let active_workspace = request_json(&request_socket, "j/activeworkspace")?;
+    let active_window: ActiveWindow = request_json(&request_socket, "j/activewindow")?;
+    let clients = request_json(&request_socket, "j/clients")?;
+    let active_address = normalize_address(&active_window.address);
+    let state = state_from_parts(workspaces, active_workspace, active_window, clients);
+
+    let _ = updates.send_blocking(Update::State(state));
+    Ok(active_address)
 }
 
 fn socket_paths() -> io::Result<(PathBuf, PathBuf)> {
@@ -294,31 +348,52 @@ fn state_from_parts(
     }
 }
 
-fn event_needs_refresh(line: &str) -> bool {
-    matches!(
-        line.split_once(">>").map(|(event, _)| event),
-        Some(
-            "workspace"
-                | "workspacev2"
-                | "focusedmon"
-                | "focusedmonv2"
-                | "createworkspace"
-                | "createworkspacev2"
-                | "destroyworkspace"
-                | "destroyworkspacev2"
-                | "moveworkspace"
-                | "moveworkspacev2"
-                | "renameworkspace"
-                | "activewindow"
-                | "activewindowv2"
-                | "openwindow"
-                | "closewindow"
-                | "movewindow"
-                | "movewindowv2"
-                | "urgent"
-                | "windowtitle"
-        )
-    )
+fn parse_event(line: &str) -> Event {
+    let Some((event, data)) = line.trim_end_matches(['\r', '\n']).split_once(">>") else {
+        return Event::Ignore;
+    };
+
+    match event {
+        "activewindowv2" => Event::ActiveWindow(normalize_address(data)),
+        "windowtitlev2" => {
+            let Some((address, title)) = data.split_once(',') else {
+                return Event::Ignore;
+            };
+            let Some(address) = normalize_address(address) else {
+                return Event::Ignore;
+            };
+            Event::Title {
+                address,
+                title: title.into(),
+            }
+        }
+        "workspace" | "workspacev2" | "focusedmon" | "focusedmonv2" | "createworkspace"
+        | "createworkspacev2" | "destroyworkspace" | "destroyworkspacev2" | "moveworkspace"
+        | "moveworkspacev2" | "renameworkspace" | "openwindow" | "closewindow" | "movewindow"
+        | "movewindowv2" | "urgent" => Event::Refresh,
+        _ => Event::Ignore,
+    }
+}
+
+fn normalize_address(address: &str) -> Option<String> {
+    let address = address
+        .strip_prefix("0x")
+        .or_else(|| address.strip_prefix("0X"))
+        .unwrap_or(address)
+        .trim();
+    (!address.is_empty()).then(|| address.to_ascii_lowercase())
+}
+
+fn event_needs_refresh(event: &Event, active_address: Option<&str>) -> bool {
+    match event {
+        Event::Refresh => true,
+        Event::ActiveWindow(address) => address.as_deref() != active_address,
+        Event::Title { .. } | Event::Ignore => false,
+    }
+}
+
+fn is_active_address(address: &str, active_address: Option<&str>) -> bool {
+    active_address == Some(address)
 }
 
 #[cfg(test)]
@@ -368,11 +443,87 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_events_that_change_the_module() {
-        assert!(event_needs_refresh("activewindowv2>>0x123"));
-        assert!(event_needs_refresh("workspacev2>>2,2"));
-        assert!(event_needs_refresh("urgent>>0x123"));
-        assert!(!event_needs_refresh("configreloaded>>"));
+    fn parses_events_that_change_the_module() {
+        assert_eq!(
+            parse_event("activewindowv2>>0x123"),
+            Event::ActiveWindow(Some("123".into()))
+        );
+        assert_eq!(parse_event("activewindowv2>>"), Event::ActiveWindow(None));
+        assert_eq!(parse_event("activewindow>>class,title"), Event::Ignore);
+        assert_eq!(parse_event("workspacev2>>2,2"), Event::Refresh);
+        assert_eq!(parse_event("urgent>>0x123"), Event::Refresh);
+        assert_eq!(parse_event("configreloaded>>"), Event::Ignore);
+        assert_eq!(parse_event("windowtitle>>0x123"), Event::Ignore);
+    }
+
+    #[test]
+    fn parses_title_events_without_losing_commas() {
+        assert_eq!(
+            parse_event("windowtitlev2>>0xAbC,tmux:agent:codex (work, active)\n"),
+            Event::Title {
+                address: "abc".into(),
+                title: "tmux:agent:codex (work, active)".into(),
+            }
+        );
+        assert_eq!(parse_event("windowtitlev2>>0x123"), Event::Ignore);
+    }
+
+    #[test]
+    fn normalizes_hyprland_window_addresses() {
+        assert_eq!(normalize_address("0xAbC"), Some("abc".into()));
+        assert_eq!(normalize_address("ABC"), Some("abc".into()));
+        assert_eq!(normalize_address("0x"), None);
+    }
+
+    #[test]
+    fn title_events_only_match_the_active_window() {
+        assert!(is_active_address("abc", Some("abc")));
+        assert!(!is_active_address("abc", Some("def")));
+        assert!(!is_active_address("abc", None));
+    }
+
+    #[test]
+    fn repeated_active_window_events_do_not_refresh() {
+        assert!(!event_needs_refresh(
+            &Event::ActiveWindow(Some("abc".into())),
+            Some("abc")
+        ));
+        assert!(event_needs_refresh(
+            &Event::ActiveWindow(Some("def".into())),
+            Some("abc")
+        ));
+        assert!(event_needs_refresh(&Event::ActiveWindow(None), Some("abc")));
+    }
+
+    #[test]
+    fn coalesces_title_updates_until_the_rate_limit_expires() {
+        let start = Instant::now();
+        let mut titles = TitleUpdates::default();
+
+        titles.queue("first".into());
+        assert_eq!(titles.take_ready(start), Some("first".into()));
+
+        titles.queue("second".into());
+        assert_eq!(titles.take_ready(start + TITLE_UPDATE_INTERVAL / 2), None);
+        titles.queue("latest".into());
+        assert_eq!(
+            titles.take_ready(start + TITLE_UPDATE_INTERVAL),
+            Some("latest".into())
+        );
+    }
+
+    #[test]
+    fn clearing_title_updates_resets_the_rate_limit() {
+        let start = Instant::now();
+        let mut titles = TitleUpdates::default();
+
+        titles.queue("old window".into());
+        assert_eq!(titles.take_ready(start), Some("old window".into()));
+        titles.queue("stale".into());
+        titles.clear();
+        titles.queue("new window".into());
+
+        assert_eq!(titles.take_ready(start), Some("new window".into()));
     }
 
     #[test]
