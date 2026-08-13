@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     env,
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
@@ -121,6 +120,8 @@ struct WorkspaceInfo {
     id: i64,
     name: String,
     monitor: String,
+    #[serde(default)]
+    urgent: bool,
 }
 
 #[derive(Deserialize)]
@@ -135,18 +136,6 @@ struct ActiveWindow {
     address: String,
     #[serde(default)]
     title: String,
-}
-
-#[derive(Deserialize)]
-struct Client {
-    #[serde(default)]
-    urgent: bool,
-    workspace: ClientWorkspace,
-}
-
-#[derive(Deserialize)]
-struct ClientWorkspace {
-    id: i64,
 }
 
 enum Command {
@@ -318,12 +307,21 @@ fn send_ready_title(updates: &async_channel::Sender<Update>, titles: &mut TitleU
 
 fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>> {
     let (request_socket, _) = socket_paths()?;
-    let workspaces = request_json(&request_socket, "j/workspaces")?;
-    let active_workspace = request_json(&request_socket, "j/activeworkspace")?;
+    let mut workspaces: Vec<WorkspaceInfo> = request_json(&request_socket, "j/workspaces")?;
+    let active_workspace: ActiveWorkspace = request_json(&request_socket, "j/activeworkspace")?;
     let active_window: ActiveWindow = request_json(&request_socket, "j/activewindow")?;
-    let clients = request_json(&request_socket, "j/clients")?;
+    for workspace in workspaces.iter_mut().filter(|workspace| {
+        workspace.monitor == active_workspace.monitor && !workspace.name.starts_with("special:")
+    }) {
+        workspace.urgent = request(
+            &request_socket,
+            &format!("repl hl.get_workspace({}).has_urgent", workspace.id),
+        )?
+        .trim()
+            == "true";
+    }
     let active_address = normalize_address(&active_window.address);
-    let state = state_from_parts(workspaces, active_workspace, active_window, clients);
+    let state = state_from_parts(workspaces, active_workspace, active_window);
 
     let _ = updates.send_blocking(Update::State(state));
     Ok(active_address)
@@ -379,14 +377,7 @@ fn state_from_parts(
     workspaces: Vec<WorkspaceInfo>,
     active_workspace: ActiveWorkspace,
     active_window: ActiveWindow,
-    clients: Vec<Client>,
 ) -> State {
-    let urgent_ids: HashSet<_> = clients
-        .into_iter()
-        .filter(|client| client.urgent)
-        .map(|client| client.workspace.id)
-        .collect();
-
     let mut workspaces: Vec<_> = workspaces
         .into_iter()
         .filter(|workspace| {
@@ -395,7 +386,7 @@ fn state_from_parts(
         .map(|workspace| Workspace {
             id: workspace.id,
             name: workspace.name,
-            urgent: urgent_ids.contains(&workspace.id),
+            urgent: workspace.urgent,
         })
         .collect();
     workspaces.sort_by(|left, right| match (left.id > 0, right.id > 0) {
@@ -472,7 +463,7 @@ mod tests {
         let state = state_from_parts(
             serde_json::from_str(
                 r#"[
-                    {"id": 3, "name": "3", "monitor": "DP-1"},
+                    {"id": 3, "name": "3", "monitor": "DP-1", "urgent": true},
                     {"id": -1337, "name": "development", "monitor": "DP-1"},
                     {"id": -99, "name": "special:scratchpad", "monitor": "DP-1"},
                     {"id": 1, "name": "1", "monitor": "DP-1"},
@@ -482,7 +473,6 @@ mod tests {
             .unwrap(),
             serde_json::from_str(r#"{"id": 1, "monitor": "DP-1"}"#).unwrap(),
             serde_json::from_str(r#"{"title": "Terminal"}"#).unwrap(),
-            serde_json::from_str(r#"[{"urgent": true, "workspace": {"id": 3}}]"#).unwrap(),
         );
 
         assert_eq!(state.active_id, Some(1));
