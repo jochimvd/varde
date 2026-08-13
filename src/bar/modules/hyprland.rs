@@ -15,6 +15,7 @@ use crate::background;
 
 const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
+const SUBMAP_PREFIX: &str = "󰌌 ";
 
 pub fn widget() -> gtk::Box {
     let root = gtk::Box::builder()
@@ -59,7 +60,13 @@ pub fn widget() -> gtk::Box {
         }
         Update::Title(title) => {
             state.title = title;
-            window.set_label(&state.title);
+            if state.submap.is_none() {
+                window.set_label(&state.title);
+            }
+        }
+        Update::Submap(submap) => {
+            state.submap = submap;
+            update_window_title(&window, &state);
         }
     });
 
@@ -71,6 +78,7 @@ struct State {
     workspaces: Vec<Workspace>,
     active_id: Option<i64>,
     title: String,
+    submap: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,6 +92,7 @@ enum Update {
     State(State),
     ActiveWorkspace(i64),
     Title(String),
+    Submap(Option<String>),
 }
 
 #[derive(Default)]
@@ -148,6 +157,7 @@ enum Event {
     Workspace(i64),
     ActiveWindow(Option<String>),
     Title { address: String, title: String },
+    Submap(Option<String>),
     Ignore,
 }
 
@@ -170,8 +180,18 @@ fn render(
         update_workspace_classes(workspaces, next);
     }
 
-    if current.title != next.title {
-        window.set_label(&next.title);
+    if current.submap != next.submap || next.submap.is_none() && current.title != next.title {
+        update_window_title(window, next);
+    }
+}
+
+fn update_window_title(window: &gtk::Label, state: &State) {
+    if let Some(submap) = &state.submap {
+        window.set_label(&format!("{SUBMAP_PREFIX}{submap}"));
+        window.add_css_class("submap");
+    } else {
+        window.set_label(&state.title);
+        window.remove_css_class("submap");
     }
 }
 
@@ -279,11 +299,16 @@ fn run_worker(updates: async_channel::Sender<Update>, commands: Receiver<Command
                             if let Ok(address) = refresh(&updates) {
                                 active_address = address;
                             }
-                        } else if let Event::Title { address, title } = event
-                            && is_active_address(&address, active_address.as_deref())
+                        } else if let Event::Title {
+                            ref address,
+                            ref title,
+                        } = event
+                            && is_active_address(address, active_address.as_deref())
                         {
-                            title_updates.queue(title);
+                            title_updates.queue(title.clone());
                             send_ready_title(&updates, &mut title_updates);
+                        } else if let Event::Submap(submap) = event {
+                            let _ = updates.send_blocking(Update::Submap(submap));
                         }
                         line.clear();
                     }
@@ -310,6 +335,8 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
     let mut workspaces: Vec<WorkspaceInfo> = request_json(&request_socket, "j/workspaces")?;
     let active_workspace: ActiveWorkspace = request_json(&request_socket, "j/activeworkspace")?;
     let active_window: ActiveWindow = request_json(&request_socket, "j/activewindow")?;
+    let submap = request(&request_socket, "repl ':' .. hl.get_current_submap()")?;
+    let submap = parse_submap_query(&submap)?;
     for workspace in workspaces.iter_mut().filter(|workspace| {
         workspace.monitor == active_workspace.monitor && !workspace.name.starts_with("special:")
     }) {
@@ -321,7 +348,7 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
             == "true";
     }
     let active_address = normalize_address(&active_window.address);
-    let state = state_from_parts(workspaces, active_workspace, active_window);
+    let state = state_from_parts(workspaces, active_workspace, active_window, submap);
 
     let _ = updates.send_blocking(Update::State(state));
     Ok(active_address)
@@ -377,6 +404,7 @@ fn state_from_parts(
     workspaces: Vec<WorkspaceInfo>,
     active_workspace: ActiveWorkspace,
     active_window: ActiveWindow,
+    submap: Option<String>,
 ) -> State {
     let mut workspaces: Vec<_> = workspaces
         .into_iter()
@@ -400,7 +428,23 @@ fn state_from_parts(
         workspaces,
         active_id: Some(active_workspace.id),
         title: active_window.title,
+        submap,
     }
+}
+
+fn parse_submap_query(response: &str) -> io::Result<Option<String>> {
+    let response = response.trim_end_matches(['\r', '\n']);
+    let submap = response.strip_prefix(':').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Hyprland returned an invalid submap response",
+        )
+    })?;
+    Ok(normalize_submap(submap))
+}
+
+fn normalize_submap(submap: &str) -> Option<String> {
+    (!submap.is_empty() && submap != "reset").then(|| submap.to_owned())
 }
 
 fn parse_event(line: &str) -> Event {
@@ -427,6 +471,7 @@ fn parse_event(line: &str) -> Event {
                 title: title.into(),
             }
         }
+        "submap" => Event::Submap(normalize_submap(data)),
         "focusedmonv2" | "createworkspacev2" | "destroyworkspacev2" | "moveworkspacev2"
         | "renameworkspace" | "closewindow" | "movewindowv2" | "urgent" => Event::Refresh,
         _ => Event::Ignore,
@@ -446,7 +491,7 @@ fn event_needs_refresh(event: &Event, active_address: Option<&str>) -> bool {
     match event {
         Event::Refresh => true,
         Event::ActiveWindow(address) => address.as_deref() != active_address,
-        Event::Workspace(_) | Event::Title { .. } | Event::Ignore => false,
+        Event::Workspace(_) | Event::Title { .. } | Event::Submap(_) | Event::Ignore => false,
     }
 }
 
@@ -473,10 +518,12 @@ mod tests {
             .unwrap(),
             serde_json::from_str(r#"{"id": 1, "monitor": "DP-1"}"#).unwrap(),
             serde_json::from_str(r#"{"title": "Terminal"}"#).unwrap(),
+            None,
         );
 
         assert_eq!(state.active_id, Some(1));
         assert_eq!(state.title, "Terminal");
+        assert_eq!(state.submap, None);
         assert_eq!(
             state.workspaces,
             vec![
@@ -513,6 +560,12 @@ mod tests {
         assert_eq!(parse_event("focusedmonv2>>DP-1,2"), Event::Refresh);
         assert_eq!(parse_event("focusedmon>>DP-1,2"), Event::Ignore);
         assert_eq!(parse_event("urgent>>0x123"), Event::Refresh);
+        assert_eq!(
+            parse_event("submap>>Resize windows"),
+            Event::Submap(Some("Resize windows".into()))
+        );
+        assert_eq!(parse_event("submap>>"), Event::Submap(None));
+        assert_eq!(parse_event("submap>>reset"), Event::Submap(None));
         assert_eq!(parse_event("configreloaded>>"), Event::Ignore);
         assert_eq!(parse_event("windowtitle>>0x123"), Event::Ignore);
     }
@@ -534,6 +587,17 @@ mod tests {
         assert_eq!(normalize_address("0xAbC"), Some("abc".into()));
         assert_eq!(normalize_address("ABC"), Some("abc".into()));
         assert_eq!(normalize_address("0x"), None);
+    }
+
+    #[test]
+    fn parses_the_current_submap_query() {
+        assert_eq!(parse_submap_query(":\n").unwrap(), None);
+        assert_eq!(parse_submap_query(":reset").unwrap(), None);
+        assert_eq!(
+            parse_submap_query(":Resize windows\n").unwrap(),
+            Some("Resize windows".into())
+        );
+        assert!(parse_submap_query("Resize windows").is_err());
     }
 
     #[test]
@@ -597,6 +661,7 @@ mod tests {
             }],
             active_id: Some(1),
             title: "one".into(),
+            submap: None,
         };
         let mut changed = state.clone();
         changed.active_id = Some(2);

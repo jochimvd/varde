@@ -105,6 +105,10 @@ button {
     padding-left: 5px;
 }
 
+.window.submap {
+    color: @accent_color;
+}
+
 .clock {
     padding-right: 5px;
     padding-left: 5px;
