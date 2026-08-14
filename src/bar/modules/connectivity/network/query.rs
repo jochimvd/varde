@@ -22,7 +22,8 @@ pub(super) fn state() -> State {
         return State::Wifi {
             interface: route.device,
             network: station.network,
-            frequency_mhz: station.frequency_mhz,
+            mode: station.mode,
+            frequency: station.frequency,
             signal: station.signal,
             address,
             received: interface.received,
@@ -51,7 +52,8 @@ fn connected_station(interface: &str) -> Option<WifiStation> {
 
 struct WifiStation {
     network: String,
-    frequency_mhz: u32,
+    mode: String,
+    frequency: u32,
     signal: u8,
 }
 
@@ -68,19 +70,16 @@ fn parse_iwctl_stations(text: &str) -> Vec<String> {
 fn parse_wifi_station(text: &str) -> Option<WifiStation> {
     let text = strip_ansi(text);
     let network = property(&text, "Connected network")?;
-    let frequency_mhz = property(&text, "Frequency")?
-        .split_whitespace()
-        .next()?
-        .parse()
-        .ok()?;
     let rssi: i32 = property(&text, "AverageRSSI")?
         .split_whitespace()
         .next()?
         .parse()
         .ok()?;
+    let frequency = property(&text, "Frequency")?.parse().ok()?;
     Some(WifiStation {
         network,
-        frequency_mhz,
+        mode: property(&text, "RxMode")?,
+        frequency,
         signal: rssi_to_percent(rssi),
     })
 }
@@ -176,10 +175,11 @@ mod tests {
         let stations = "  Name                  State\n  wlan0                 connected\n";
         assert_eq!(parse_iwctl_stations(stations), vec!["wlan0"]);
 
-        let station = "Connected network     Home\nFrequency            5180\nAverageRSSI           -62 dBm\n";
+        let station = "Connected network     Home\nFrequency             5640\nAverageRSSI           -62 dBm\nRxMode                802.11ax\n";
         let station = parse_wifi_station(station).unwrap();
         assert_eq!(station.network, "Home");
-        assert_eq!(station.frequency_mhz, 5180);
+        assert_eq!(station.mode, "802.11ax");
+        assert_eq!(station.frequency, 5640);
         assert_eq!(station.signal, 76);
     }
 
