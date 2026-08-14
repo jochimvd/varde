@@ -13,7 +13,8 @@ pub(super) enum State {
     Wifi {
         interface: String,
         network: String,
-        frequency_mhz: u32,
+        mode: String,
+        frequency: u32,
         signal: u8,
         address: String,
         received: u64,
@@ -37,7 +38,7 @@ impl State {
 
     pub(super) fn icon(&self) -> &'static str {
         match self {
-            Self::Disconnected => "󰤭",
+            Self::Disconnected => "󰲛",
             Self::Ethernet { .. } => "󰈀",
             Self::Wifi { signal, .. } => wifi_icon(*signal),
         }
@@ -49,14 +50,16 @@ impl State {
             Self::Wifi {
                 interface,
                 network,
-                frequency_mhz,
-                signal,
+                mode,
+                frequency,
                 address,
                 received,
                 sent,
+                ..
             } => format!(
-                "󰣸  {network} ({} GHz, {signal}%)\n󰛳  {address}\n{}",
-                *frequency_mhz as f32 / 1000.0,
+                "{network} · {} · {}\n󰩠  {address}\n{}",
+                wifi_generation(mode),
+                wifi_band(*frequency),
                 traffic(interface, *received, *sent, previous)
             ),
             Self::Ethernet {
@@ -65,7 +68,7 @@ impl State {
                 received,
                 sent,
             } => format!(
-                "  {interface}\n󰛳  {address}\n{}",
+                "Ethernet · {interface}\n󰩠  {address}\n{}",
                 traffic(interface, *received, *sent, previous)
             ),
         }
@@ -95,6 +98,24 @@ impl State {
     }
 }
 
+fn wifi_generation(mode: &str) -> &str {
+    match mode {
+        "802.11be" => "Wi-Fi 7",
+        "802.11ax" => "Wi-Fi 6",
+        "802.11ac" => "Wi-Fi 5",
+        "802.11n" => "Wi-Fi 4",
+        _ => mode,
+    }
+}
+
+fn wifi_band(frequency: u32) -> &'static str {
+    match frequency {
+        0..=3000 => "2.4G",
+        3001..=5924 => "5G",
+        _ => "6G",
+    }
+}
+
 fn wifi_icon(signal: u8) -> &'static str {
     match signal {
         0..=20 => "󰤯",
@@ -107,34 +128,23 @@ fn wifi_icon(signal: u8) -> &'static str {
 
 fn traffic(interface: &str, received: u64, sent: u64, previous: Option<&TrafficSample>) -> String {
     let Some(previous) = previous else {
-        return "  —     —".into();
+        return "  —    —".into();
     };
     if previous.interface != interface {
-        return "  —     —".into();
+        return "  —    —".into();
     }
     let seconds = previous.at.elapsed().as_secs_f64();
     let sent = sent.saturating_sub(previous.sent) as f64 / seconds;
     let received = received.saturating_sub(previous.received) as f64 / seconds;
-    format!(
-        "  {}/s     {}/s",
-        format_bytes(sent),
-        format_bytes(received)
-    )
+    format_rates(received, sent)
 }
 
-fn format_bytes(bytes: f64) -> String {
-    const UNITS: [&str; 4] = ["B", "KiB", "MiB", "GiB"];
-    let mut value = bytes;
-    let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{value:.0} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+fn format_rates(received: f64, sent: f64) -> String {
+    format!(
+        "  {:.2}    {:.2} Mbps",
+        received * 8.0 / 1_000_000.0,
+        sent * 8.0 / 1_000_000.0
+    )
 }
 
 #[cfg(test)]
@@ -151,7 +161,26 @@ mod tests {
         };
         assert_eq!(
             traffic("eth0", 10_000, 10_000, Some(&previous)),
-            "  —     —"
+            "  —    —"
         );
+    }
+
+    #[test]
+    fn names_wifi_generations() {
+        assert_eq!(wifi_generation("802.11ax"), "Wi-Fi 6");
+        assert_eq!(wifi_generation("802.11g"), "802.11g");
+    }
+
+    #[test]
+    fn names_wifi_bands() {
+        assert_eq!(wifi_band(2412), "2.4G");
+        assert_eq!(wifi_band(5640), "5G");
+        assert_eq!(wifi_band(5955), "6G");
+    }
+
+    #[test]
+    fn formats_both_rates_with_one_unit() {
+        assert_eq!(format_rates(125_000.0, 62_500.0), "  1.00    0.50 Mbps");
+        assert_eq!(format_rates(20.0, 10.0), "  0.00    0.00 Mbps");
     }
 }
