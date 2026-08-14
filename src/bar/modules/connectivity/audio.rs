@@ -9,6 +9,8 @@ use super::command::{
 use crate::background;
 
 const INTERVAL: Duration = Duration::from_secs(30);
+const DEVICE_NAME_LIMIT: usize = 16;
+const VOLUME_BAR_WIDTH: usize = 10;
 
 pub fn audio() -> gtk::Button {
     let (button, label) = module("audio");
@@ -17,7 +19,7 @@ pub fn audio() -> gtk::Button {
     let refresh = watch(INTERVAL, state, move |state| {
         class.set(if state.muted { "muted" } else { "" });
         label.set_text(state.text());
-        widget.set_tooltip_text(Some(&format!("Volume: {}%", state.percent())));
+        widget.set_tooltip_text(Some(&state.tooltip()));
     });
     subscribe(refresh.clone());
     on_click(&button, {
@@ -66,6 +68,7 @@ fn on_scroll(button: &gtk::Button, refresh: Refresh) {
 struct State {
     volume: f32,
     muted: bool,
+    device: Option<String>,
 }
 
 impl State {
@@ -84,21 +87,40 @@ impl State {
             }
         }
     }
+
+    fn tooltip(&self) -> String {
+        let percent = self.percent();
+        let volume = if self.muted {
+            format!("{}% muted", percent)
+        } else {
+            format!("{percent}%")
+        };
+        let volume = format!("Volume  {} {volume}", volume_bar(percent));
+        match &self.device {
+            Some(device) => format!("Output  {}\n{volume}", truncate(device, DEVICE_NAME_LIMIT)),
+            None => volume,
+        }
+    }
 }
 
 fn state() -> State {
-    command("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).map_or(
+    let mut state = command("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).map_or(
         State {
             volume: 0.0,
             muted: true,
+            device: None,
         },
         |output| {
             parse_volume(&output).unwrap_or(State {
                 volume: 0.0,
                 muted: true,
+                device: None,
             })
         },
-    )
+    );
+    state.device = command("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"])
+        .and_then(|output| parse_device(&output));
+    state
 }
 
 fn parse_volume(text: &str) -> Option<State> {
@@ -106,7 +128,33 @@ fn parse_volume(text: &str) -> Option<State> {
     Some(State {
         volume,
         muted: text.contains("[MUTED]"),
+        device: None,
     })
+}
+
+fn parse_device(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        line.trim()
+            .trim_start_matches("* ")
+            .strip_prefix("node.description = ")
+            .map(|value| value.trim_matches('"').to_owned())
+    })
+}
+
+fn truncate(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.into();
+    }
+    text.chars().take(limit - 1).chain(['…']).collect()
+}
+
+fn volume_bar(percent: u8) -> String {
+    let filled = ((usize::from(percent) + 5) / 10).min(VOLUME_BAR_WIDTH);
+    format!(
+        "[{}{}]",
+        "#".repeat(filled),
+        "-".repeat(VOLUME_BAR_WIDTH - filled)
+    )
 }
 
 #[cfg(test)]
@@ -118,5 +166,28 @@ mod tests {
         let state = parse_volume("Volume: 0.50 [MUTED]").unwrap();
         assert_eq!(state.percent(), 50);
         assert!(state.muted);
+    }
+
+    #[test]
+    fn parses_output_device() {
+        assert_eq!(
+            parse_device("  * node.description = \"Scarlett 2i2 Headphones\"\n"),
+            Some("Scarlett 2i2 Headphones".into())
+        );
+    }
+
+    #[test]
+    fn caps_output_device_name() {
+        assert_eq!(
+            truncate("Scarlett 2i2 4th Gen Headphones / Line 1-2", 16),
+            "Scarlett 2i2 4t…"
+        );
+    }
+
+    #[test]
+    fn formats_volume_bar() {
+        assert_eq!(volume_bar(0), "[----------]");
+        assert_eq!(volume_bar(50), "[#####-----]");
+        assert_eq!(volume_bar(100), "[##########]");
     }
 }
