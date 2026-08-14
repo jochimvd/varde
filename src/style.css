@@ -281,6 +281,11 @@ popover.tray-menu separator {
     color: @tertiary_color;
 }
 
+.bluetooth.discoverable,
+.bluetooth.discovering {
+    animation: blink-accent 2s steps(2) infinite;
+}
+
 .cpu.critical,
 .memory.critical,
 .battery.critical:not(.charging) {
@@ -325,10 +330,13 @@ popover.tray-menu separator {
 }
 
 tooltip {
-    font-family: 'JetBrainsMono Nerd Font';
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    font-feature-settings: "tnum";
+    margin-top: 6px;
     padding: 8px 10px;
-    background: @surface_color;
-    border: 1px solid @tertiary_color;
+    color: @primary_color;
+    background: @surface_low_color;
+    border: 1px solid @overlay_strong_color;
     border-radius: 8px;
 }
 
