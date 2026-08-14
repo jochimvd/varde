@@ -50,24 +50,14 @@ fn label(name: &str) -> gtk::Label {
 
 fn update_cpu(label: &gtk::Label, usage: u8) {
     label.set_text(&format!("󰍛 {usage:>2}%"));
-    label.set_tooltip_text(Some(&cpu_tooltip(usage)));
+    label.set_tooltip_text(Some(&cpu_tooltip()));
     set_critical(label, usage >= 90);
 }
 
-fn cpu_tooltip(usage: u8) -> String {
-    let mut lines = vec![format!("CPU: {usage}%")];
-    if let Some(load) = load_average() {
-        lines.push(format!("Load: {load}"));
-    }
-
-    let threads = std::thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1);
-    lines.push(format!("Threads: {threads}"));
-    if let Some(ghz) = average_cpu_frequency() {
-        lines.push(format!("Frequency: {ghz:.2} GHz"));
-    }
-    lines.join("\n")
+fn cpu_tooltip() -> String {
+    load_average()
+        .map(|load| format!("Load  {load}"))
+        .unwrap_or_else(|| "Load  —".into())
 }
 
 fn load_average() -> Option<String> {
@@ -76,28 +66,11 @@ fn load_average() -> Option<String> {
     (values.len() == 3).then(|| values.join("  "))
 }
 
-fn average_cpu_frequency() -> Option<f64> {
-    let frequencies: Vec<u64> = fs::read_dir("/sys/devices/system/cpu")
-        .ok()?
-        .flatten()
-        .filter_map(|entry| {
-            fs::read_to_string(entry.path().join("cpufreq/scaling_cur_freq"))
-                .ok()?
-                .trim()
-                .parse()
-                .ok()
-        })
-        .collect();
-    (!frequencies.is_empty())
-        .then(|| frequencies.iter().sum::<u64>() as f64 / frequencies.len() as f64 / 1_000_000.0)
-}
-
 fn update_memory(label: &gtk::Label) {
     if let Some(memory) = read_memory() {
         label.set_text(&format!("󰘚 {:>2}%", memory.percentage));
         label.set_tooltip_text(Some(&format!(
-            "Memory: {}%\n{:.1} / {:.1} GiB",
-            memory.percentage,
+            "{:.1} / {:.1} GiB",
             memory.used as f64 / 1024.0 / 1024.0,
             memory.total as f64 / 1024.0 / 1024.0
         )));
