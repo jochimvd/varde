@@ -141,17 +141,31 @@ impl Source for Clipboard {
     }
 }
 
-fn parse_list(output: &str) -> Result<Vec<LoadedItem>, String> {
-    let items = output.lines().filter_map(parse_line).collect::<Vec<_>>();
+fn parse_list(output: &[u8]) -> Result<Vec<LoadedItem>, String> {
+    let items = output
+        .split(|byte| *byte == b'\n')
+        .filter_map(parse_line)
+        .collect::<Vec<_>>();
     if !output.is_empty() && items.is_empty() {
         return Err("Could not parse clipboard history".into());
     }
     Ok(items)
 }
 
-fn parse_line(line: &str) -> Option<LoadedItem> {
-    let (id, preview) = line.split_once('\t')?;
+fn parse_line(line: &[u8]) -> Option<LoadedItem> {
+    let separator = line.iter().position(|byte| *byte == b'\t')?;
+    let id = std::str::from_utf8(&line[..separator]).ok()?;
     id.parse::<u64>().ok()?;
+    let preview = &line[separator + 1..];
+
+    let Ok(preview) = std::str::from_utf8(preview) else {
+        return Some(LoadedItem {
+            id: id.to_string(),
+            title: "Binary data".into(),
+            visual: LoadedVisual::None,
+            search_terms: Vec::new(),
+        });
+    };
 
     if let Some(dimensions) = image_dimensions(preview) {
         return Some(LoadedItem {
@@ -292,8 +306,6 @@ fn command_worker(receiver: Receiver<CommandRequest>, generation: Arc<AtomicU64>
 fn load_items() -> Result<Vec<LoadedItem>, String> {
     let output = crate::background::command_output("cliphist", &["list"], COMMAND_TIMEOUT)
         .ok_or_else(|| "Could not read clipboard history".to_string())?;
-    let output = String::from_utf8(output)
-        .map_err(|_| "Clipboard history contains invalid text".to_string())?;
     parse_list(&output)
 }
 
@@ -391,7 +403,7 @@ mod tests {
     #[test]
     fn parses_text_and_images_in_history_order() {
         let items = parse_list(
-            "42\tmost recent text\n41\t[[ binary data 12 KiB png 474x598 ]]\n40\tolder\n",
+            b"42\tmost recent text\n41\t[[ binary data 12 KiB png 474x598 ]]\n40\tolder\n",
         )
         .unwrap();
         assert_eq!(
@@ -407,9 +419,19 @@ mod tests {
 
     #[test]
     fn ignores_malformed_lines_but_rejects_unparseable_output() {
-        assert_eq!(parse_list("bad\n1\tvalid\n").unwrap().len(), 1);
-        assert!(parse_list("bad\n").is_err());
-        assert!(parse_list("").unwrap().is_empty());
+        assert_eq!(parse_list(b"bad\n1\tvalid\n").unwrap().len(), 1);
+        assert!(parse_list(b"bad\n").is_err());
+        assert!(parse_list(b"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn keeps_invalid_utf8_as_binary_data() {
+        let items = parse_list(b"42\tvalid\n41\tinvalid \xff data\n40\tolder\n").unwrap();
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(items[1].id, "41");
+        assert_eq!(items[1].title, "Binary data");
+        assert!(matches!(items[1].visual, LoadedVisual::None));
     }
 
     #[test]
