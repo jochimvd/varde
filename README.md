@@ -6,9 +6,9 @@ A small, personal desktop shell for Hyprland, written in Rust with GTK 4.
 
 ![Varde notification center](docs/images/varde-notifications.png)
 
-Varde provides a status bar, application and clipboard launchers,
+Varde provides a status bar, application, action, and clipboard launchers,
 notifications, workspace controls, system status, idle inhibition, privacy
-indicators, and a StatusNotifier tray. It is configured directly in the source.
+indicators, and a StatusNotifier tray. The shell is configured directly in the source; launcher actions use TOML.
 
 ## Try it
 
@@ -78,6 +78,7 @@ systemctl --user enable --now varde.service
 
 ```sh
 varde launcher
+varde actions
 varde clipboard
 varde notifications
 varde notifications clear
@@ -88,6 +89,43 @@ printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."
 ```
 
 See `varde --help` for the complete CLI.
+
+## Launcher actions
+
+Type `>` in the application launcher or run `varde actions` to open the action
+menu. Text after `>` searches action names and commands. Remove the prefix to
+return to applications. Running `varde actions` again closes the action menu.
+
+Define actions in `$XDG_CONFIG_HOME/varde/actions.toml`, defaulting to
+`~/.config/varde/actions.toml`:
+
+```toml
+[[actions]]
+name = "Restart audio"
+command = 'systemctl --user restart pipewire'
+
+[[actions]]
+name = "Take screenshot"
+command = '"$HOME/scripts/screenshot.sh"'
+
+[[actions]]
+name = "Save timestamp"
+command = '''
+mkdir -p "$HOME/notes"
+date >> "$HOME/notes/timestamps.txt"
+'''
+```
+
+The file is read whenever the action menu opens, including when switching into
+it with `>`. A missing file gives an empty menu; invalid configuration shows an
+error in the launcher.
+
+Selecting an action starts `bash -c` with the configured command and closes the
+menu. Commands inherit Varde's environment and working directory; use absolute
+paths or `$HOME` for scripts. No interactive shell configuration is loaded and
+no terminal is opened automatically. For an interactive command, launch your
+terminal explicitly in `command`. Output and command failures go to Varde's
+logs (the user journal when running as a service).
 
 ## Customize
 

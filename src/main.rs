@@ -83,6 +83,11 @@ fn handle_command_line(
             notifications.close();
             launcher.toggle_apps(app);
         }
+        command::Request::Actions => {
+            app.activate();
+            notifications.close();
+            launcher.toggle_actions(app);
+        }
         command::Request::Clipboard => {
             app.activate();
             notifications.close();
