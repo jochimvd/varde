@@ -354,10 +354,15 @@ fn install_pointer_actions(
                         .find_map(|group| group.pointer_target(&picked))
                 });
             if press {
-                pressed.replace(target);
+                pressed.replace(Some((button, target)));
                 return glib::Propagation::Proceed;
             }
-            if pressed.take() != target {
+            if !pressed
+                .take()
+                .is_some_and(|(pressed_button, pressed_target)| {
+                    pressed_button == button && pressed_target == target
+                })
+            {
                 return glib::Propagation::Proceed;
             }
             match (button, target) {
