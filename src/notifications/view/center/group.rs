@@ -98,13 +98,16 @@ impl GroupView {
             .build();
         let has_fresh = Rc::new(Cell::new(false));
         disclosure.connect_clicked({
-            let container = container.clone();
+            let container = container.downgrade();
             let revealer = revealer.clone();
             let chevron = chevron.clone();
             let fresh = fresh.clone();
             let has_fresh = Rc::clone(&has_fresh);
             let on_expansion = Rc::clone(on_expansion);
             move |_| {
+                let Some(container) = container.upgrade() else {
+                    return;
+                };
                 let expanded = !revealer.reveals_child();
                 revealer.set_reveal_child(expanded);
                 chevron.set_label(if expanded { CHEVRON_UP } else { CHEVRON_DOWN });
