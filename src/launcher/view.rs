@@ -39,6 +39,7 @@ pub(super) struct Launcher {
     limit: Option<usize>,
     generation: u64,
     loading: bool,
+    load_error: Option<String>,
     activation_pending: Cell<bool>,
     events: async_channel::Sender<Event>,
     thumbnail_cache: RefCell<HashMap<String, Option<gdk::MemoryTexture>>>,
@@ -108,7 +109,8 @@ impl Launcher {
             move |_| {
                 let entry = entry.clone();
                 glib::idle_add_local_once(move || {
-                    entry.grab_focus();
+                    entry.grab_focus_without_selecting();
+                    entry.set_position(-1);
                 });
             }
         });
@@ -142,6 +144,9 @@ impl Launcher {
         let message = gtk::Label::builder()
             .height_request(ROW_HEIGHT)
             .label("No results")
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .max_width_chars(1)
             .xalign(0.0)
             .build();
         message.add_css_class("launcher-message");
@@ -275,6 +280,7 @@ impl Launcher {
             limit: None,
             generation: 0,
             loading: false,
+            load_error: None,
             activation_pending: Cell::new(false),
             events,
             thumbnail_cache: RefCell::new(HashMap::new()),
@@ -355,13 +361,29 @@ impl Launcher {
         alphabetical: bool,
         limit: Option<usize>,
     ) {
+        self.entry.set_placeholder_text(Some(prompt));
+        self.entry
+            .set_text(if mode == Mode::Actions { ">" } else { "" });
+        self.entry.set_position(-1);
+        self.alphabetical = alphabetical;
+        self.limit = limit;
+        self.load_source(mode, source);
+    }
+
+    fn load_source(&mut self, mode: Mode, source: Rc<dyn Source>) {
         let generation = self.generation.wrapping_add(1);
         self.source.borrow().set_generation(generation);
         self.mode = mode;
+        match mode {
+            Mode::Apps => self.entry.set_placeholder_text(Some("Search")),
+            Mode::Actions => self.entry.set_placeholder_text(Some("Actions")),
+            _ => {}
+        }
         self.source.replace(source);
         self.generation = generation;
         self.source.borrow().set_generation(generation);
         self.loading = false;
+        self.load_error = None;
         self.activation_pending.set(false);
         self.hover_selection.set(false);
         self.pointer_position.set(None);
@@ -371,10 +393,6 @@ impl Launcher {
         self.thumbnail_targets.borrow_mut().clear();
         self.preview.reset();
         self.sync_preview_height();
-        self.alphabetical = alphabetical;
-        self.limit = limit;
-        self.entry.set_placeholder_text(Some(prompt));
-        self.entry.set_text("");
         self.scroll.vadjustment().set_value(0.0);
         let loaded = self.source.borrow().items(generation, self.events.clone());
         match loaded {
@@ -406,19 +424,31 @@ impl Launcher {
                 self.items.borrow_mut().clear();
                 self.visible.borrow_mut().clear();
                 self.show_message(&error, true);
+                self.load_error = Some(error);
             }
         }
     }
 
     pub(super) fn update(&mut self) {
+        let text = self.entry.text();
+        let (mode, query) = search_mode(self.mode, text.as_str());
+        if mode != self.mode {
+            let source = match mode {
+                Mode::Actions => super::actions::source(),
+                Mode::Apps => source::apps(),
+                _ => unreachable!(),
+            };
+            self.load_source(mode, source);
+            return;
+        }
         if self.loading {
             return;
         }
-        let mut visible = search::rank(
-            &self.items.borrow(),
-            self.entry.text().as_str(),
-            self.alphabetical,
-        );
+        if let Some(error) = &self.load_error {
+            self.show_message(error, true);
+            return;
+        }
+        let mut visible = search::rank(&self.items.borrow(), query, self.alphabetical);
         if let Some(limit) = self.limit {
             visible.truncate(limit);
         }
@@ -672,6 +702,16 @@ impl Launcher {
     }
 }
 
+fn search_mode(mode: Mode, text: &str) -> (Mode, &str) {
+    match mode {
+        Mode::Apps | Mode::Actions => match text.strip_prefix('>') {
+            Some(query) => (Mode::Actions, query.trim_start()),
+            None => (Mode::Apps, text),
+        },
+        _ => (mode, text),
+    }
+}
+
 fn image_texture(pixels: ImagePixels) -> gdk::MemoryTexture {
     let bytes = glib::Bytes::from_owned(pixels.rgba);
     gdk::MemoryTexture::new(
@@ -729,6 +769,21 @@ fn visible_row_range(value: f64, page_size: f64, count: usize) -> std::ops::Rang
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn action_prefix_only_switches_application_search() {
+        assert_eq!(search_mode(Mode::Apps, "> audio"), (Mode::Actions, "audio"));
+        assert_eq!(search_mode(Mode::Actions, ">"), (Mode::Actions, ""));
+        assert_eq!(search_mode(Mode::Actions, "audio"), (Mode::Apps, "audio"));
+        assert_eq!(
+            search_mode(Mode::Clipboard, "> audio"),
+            (Mode::Clipboard, "> audio")
+        );
+        assert_eq!(
+            search_mode(Mode::Dmenu, "> audio"),
+            (Mode::Dmenu, "> audio")
+        );
+    }
 
     #[test]
     fn thumbnail_range_follows_the_scroll_viewport() {

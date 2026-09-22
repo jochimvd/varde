@@ -10,6 +10,7 @@ Usage: varde <COMMAND>
 Commands:
   start          Start the desktop shell
   launcher       Toggle the application launcher
+  actions        Toggle the action menu
   clipboard      Toggle the clipboard launcher
   notifications  Manage notifications
   dmenu          Select a line read from standard input
@@ -25,6 +26,9 @@ Usage: varde start";
 const LAUNCHER_HELP: &str = "Toggle the application launcher
 
 Usage: varde launcher";
+const ACTIONS_HELP: &str = "Toggle the action menu
+
+Usage: varde actions";
 const CLIPBOARD_HELP: &str = "Toggle the clipboard launcher
 
 Usage: varde clipboard";
@@ -45,6 +49,7 @@ pub enum Request {
     Start,
     Launcher,
     Clipboard,
+    Actions,
     Notifications,
     ClearNotifications,
     Dmenu { prompt: String },
@@ -70,6 +75,7 @@ pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
         [option] if option == "-V" || option == "--version" => Ok(Request::Version),
         [command] if command == "start" => Ok(Request::Start),
         [command] if command == "launcher" => Ok(Request::Launcher),
+        [command] if command == "actions" => Ok(Request::Actions),
         [command] if command == "clipboard" => Ok(Request::Clipboard),
         [command] if command == "notifications" => Ok(Request::Notifications),
         [command, action] if command == "notifications" && action == "clear" => {
@@ -81,7 +87,7 @@ pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
         [command, argument, ..]
             if matches!(
                 command.as_str(),
-                "start" | "launcher" | "clipboard" | "notifications"
+                "start" | "launcher" | "actions" | "clipboard" | "notifications"
             ) =>
         {
             Err(format!("unexpected argument '{argument}'"))
@@ -95,6 +101,7 @@ fn help(command: &str) -> Result<Request, String> {
     match command {
         "start" => Ok(Request::Help(START_HELP)),
         "launcher" => Ok(Request::Help(LAUNCHER_HELP)),
+        "actions" => Ok(Request::Help(ACTIONS_HELP)),
         "clipboard" => Ok(Request::Help(CLIPBOARD_HELP)),
         "notifications" => Ok(Request::Help(NOTIFICATIONS_HELP)),
         "dmenu" => Ok(Request::Help(DMENU_HELP)),
@@ -153,6 +160,12 @@ mod tests {
     fn parses_commands() {
         assert!(matches!(parse(&args(&[])), Ok(Request::Help(HELP))));
         assert!(matches!(parse(&args(&["start"])), Ok(Request::Start)));
+        assert!(matches!(parse(&args(&["actions"])), Ok(Request::Actions)));
+        assert!(matches!(
+            parse(&args(&["actions", "--help"])),
+            Ok(Request::Help(ACTIONS_HELP))
+        ));
+        assert!(parse(&args(&["actions", "extra"])).is_err());
         assert!(matches!(parse(&args(&["launcher"])), Ok(Request::Launcher)));
         assert!(matches!(
             parse(&args(&["clipboard"])),

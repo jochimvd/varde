@@ -1,3 +1,4 @@
+mod actions;
 mod clipboard;
 mod preview;
 mod search;
@@ -13,9 +14,10 @@ use view::Launcher;
 
 const RESULT_LIMIT: usize = 200;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Mode {
     Apps,
+    Actions,
     Clipboard,
     Dmenu,
 }
@@ -37,6 +39,10 @@ impl Manager {
         self.toggle_source(app, Mode::Apps);
     }
 
+    pub fn toggle_actions(self: &Rc<Self>, app: &gtk::Application) {
+        self.toggle_source(app, Mode::Actions);
+    }
+
     pub fn toggle_clipboard(self: &Rc<Self>, app: &gtk::Application) {
         self.toggle_source(app, Mode::Clipboard);
     }
@@ -51,6 +57,7 @@ impl Manager {
             return;
         }
         let (source, prompt, alphabetical) = match mode {
+            Mode::Actions => (actions::source(), "Actions", true),
             Mode::Apps => (source::apps(), "Search", true),
             Mode::Clipboard => (source::clipboard(), "Clipboard", false),
             Mode::Dmenu => unreachable!(),
