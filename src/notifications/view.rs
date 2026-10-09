@@ -78,6 +78,27 @@ mod tests {
     }
 
     #[test]
+    fn replacements_that_start_a_new_popup_show_again() {
+        let new_popup = |revision| {
+            let mut snapshot = super::super::model::test_snapshot(&[(1, revision)]);
+            snapshot.groups[0].notifications[0].popup_revision = revision;
+            snapshot
+        };
+        let hidden = super::super::model::test_snapshot_with_popup(&[(1, 1, false)]);
+        let mut state = PopupState::default();
+
+        assert_eq!(state.update(&new_popup(1), false), vec![(1, 1)]);
+        assert!(state.update(&hidden, false).is_empty());
+        assert_eq!(state.update(&new_popup(2), false), vec![(1, 2)]);
+        assert!(state.visible.contains(&1));
+
+        state.update(&new_popup(2), true);
+        assert!(state.update(&new_popup(2), false).is_empty());
+        assert_eq!(state.update(&new_popup(3), false), vec![(1, 3)]);
+        assert!(state.visible.contains(&1));
+    }
+
+    #[test]
     fn blocked_and_queued_notifications_wait_until_they_can_be_displayed() {
         let notifications = (1..=MAX_POPUPS as u32 + 1)
             .map(|id| (id, 1))

@@ -59,6 +59,7 @@ pub(super) struct Group {
 pub(super) struct Notification {
     pub id: u32,
     pub revision: u64,
+    pub popup_revision: u64,
     pub received_at: Option<i64>,
     pub show_popup: bool,
     app_name: Option<String>,
@@ -86,6 +87,7 @@ fn from_state_notification(notification: &state::Notification, show_popup: bool)
     Notification {
         id: notification.id,
         revision: notification.revision,
+        popup_revision: notification.popup_revision,
         received_at: Some(notification.received_at),
         show_popup,
         app_name: Some(notification.app_name.clone()),
@@ -186,6 +188,7 @@ fn notification(
     Notification {
         id,
         revision,
+        popup_revision: 1,
         received_at: None,
         show_popup,
         app_name: app_name.map(str::to_string),
