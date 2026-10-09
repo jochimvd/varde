@@ -1,9 +1,9 @@
-use std::{cell::Cell, rc::Rc};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 
 use gtk::prelude::*;
 
 use super::{
-    model::{Event, ICON_SIZE, Item, MenuItem, ToggleKind, scale_pixmap},
+    model::{Event, ICON_SIZE, Item, MenuItem, Pixmap, ToggleKind, scale_pixmap, select_pixmap},
     watcher,
 };
 use crate::background;
@@ -271,22 +271,34 @@ fn menu_row(item: &MenuItem, submenu: bool) -> gtk::Box {
 fn icon(item: &Item) -> gtk::Image {
     let image = gtk::Image::new();
     image.set_pixel_size(ICON_SIZE);
-    if let Some(pixmap) = &item.pixmap {
-        let pixmap = scale_pixmap(pixmap, ICON_SIZE);
-        let texture = gtk::gdk::MemoryTexture::new(
-            pixmap.width,
-            pixmap.height,
-            gtk::gdk::MemoryFormat::R8g8b8a8,
-            &gtk::glib::Bytes::from(&pixmap.rgba),
-            pixmap.width as usize * 4,
-        );
-        image.set_paintable(Some(&texture));
+    if !item.pixmaps.is_empty() {
+        show_pixmap(&image, &item.pixmaps);
+        let pixmaps = Arc::clone(&item.pixmaps);
+        image.connect_scale_factor_notify(move |image| show_pixmap(image, &pixmaps));
     } else if !item.icon_name.is_empty() {
         image.set_icon_name(Some(&item.icon_name));
     } else {
         image.set_icon_name(Some("image-missing"));
     }
     image
+}
+
+/// Renders the pixmap at device pixels; the image still shows it at
+/// `ICON_SIZE` logical pixels.
+fn show_pixmap(image: &gtk::Image, pixmaps: &[Pixmap]) {
+    let size = ICON_SIZE * image.scale_factor();
+    let Some(pixmap) = select_pixmap(pixmaps, size) else {
+        return;
+    };
+    let pixmap = scale_pixmap(pixmap, size);
+    let texture = gtk::gdk::MemoryTexture::new(
+        pixmap.width,
+        pixmap.height,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &gtk::glib::Bytes::from(&pixmap.rgba),
+        pixmap.width as usize * 4,
+    );
+    image.set_paintable(Some(&texture));
 }
 
 fn pointer_position(gesture: &gtk::GestureClick, fallback_x: f64, fallback_y: f64) -> (i32, i32) {
