@@ -3,9 +3,9 @@ use std::{cell::Cell, rc::Rc, time::Duration};
 use gtk::prelude::*;
 
 use super::command::{
-    StateClass, command, module, on_click, property, spawn_shell, spawn_shell_then_refresh,
-    strip_ansi, watch,
+    StateClass, command, module, on_click, property, spawn_shell_then_refresh, strip_ansi, watch,
 };
+use crate::bar::modules::open_floating;
 
 const INTERVAL: Duration = Duration::from_secs(5);
 
@@ -25,9 +25,7 @@ pub fn bluetooth() -> gtk::Button {
         }
     });
     on_click(&button, move |mouse_button| match mouse_button {
-        1 => spawn_shell(
-            "hyprctl dispatch 'hl.dsp.exec_cmd(\"$TERMINAL -e bluetui\", { tag = \"+floating-window\" })'",
-        ),
+        1 => open_floating("$TERMINAL -e bluetui"),
         3 => {
             if let Some(powered) = powered.get() {
                 let command = if powered {

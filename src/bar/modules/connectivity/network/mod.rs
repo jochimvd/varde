@@ -5,7 +5,8 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gtk::prelude::*;
 
-use super::command::{StateClass, module, on_click, spawn_shell, spawn_shell_then_refresh, watch};
+use super::command::{StateClass, module, on_click, spawn_shell_then_refresh, watch};
+use crate::bar::modules::open_floating;
 use state::TrafficSample;
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(5);
@@ -22,9 +23,7 @@ pub fn network() -> gtk::Button {
         *previous.borrow_mut() = state.traffic_sample();
     });
     on_click(&button, move |mouse_button| match mouse_button {
-        1 => spawn_shell(
-            "hyprctl dispatch 'hl.dsp.exec_cmd(\"$TERMINAL -e impala\", { tag = \"+floating-window\" })'",
-        ),
+        1 => open_floating("$TERMINAL -e impala"),
         3 => spawn_shell_then_refresh("rfkill toggle wlan", refresh.clone()),
         _ => {}
     });

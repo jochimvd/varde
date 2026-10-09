@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, fs, path::Path, rc::Rc};
+use std::{fs, path::Path, rc::Rc};
 
 use async_channel::Sender;
 use gtk::glib;
@@ -91,15 +91,13 @@ impl Source for Actions {
 }
 
 fn launch(action: &Action) -> Result<Outcome, String> {
-    let arguments = ["bash", "-c", &action.command].map(OsStr::new);
-    let process = gio::Subprocess::newv(&arguments, gio::SubprocessFlags::NONE)
-        .map_err(|error| format!("Could not launch {}: {error}", action.name))?;
     let name = action.name.clone();
-    process.wait_check_async(None::<&gio::Cancellable>, move |result| {
+    crate::background::run(&["bash", "-c", &action.command], move |result| {
         if let Err(error) = result {
             eprintln!("varde: action {name:?} failed: {error}");
         }
-    });
+    })
+    .map_err(|error| format!("Could not launch {}: {error}", action.name))?;
     Ok(Outcome::Done)
 }
 

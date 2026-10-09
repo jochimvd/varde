@@ -64,11 +64,6 @@ impl Launcher {
             }
         });
 
-        if let Some(settings) = gtk::Settings::default() {
-            settings.set_gtk_cursor_blink(true);
-            settings.set_gtk_cursor_blink_time(1_000);
-        }
-
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .name(LAUNCHER_NAME)
@@ -366,24 +361,19 @@ impl Launcher {
         alphabetical: bool,
         limit: Option<usize>,
     ) {
-        self.entry.set_placeholder_text(Some(prompt));
         self.entry
             .set_text(if mode == Mode::Actions { ">" } else { "" });
         self.entry.set_position(-1);
         self.alphabetical = alphabetical;
         self.limit = limit;
-        self.load_source(mode, source);
+        self.load_source(mode, source, prompt);
     }
 
-    fn load_source(&mut self, mode: Mode, source: Rc<dyn Source>) {
+    fn load_source(&mut self, mode: Mode, source: Rc<dyn Source>, prompt: &str) {
         let generation = self.generation.wrapping_add(1);
         self.source.borrow().set_generation(generation);
         self.mode = mode;
-        match mode {
-            Mode::Apps => self.entry.set_placeholder_text(Some("Search")),
-            Mode::Actions => self.entry.set_placeholder_text(Some("Actions")),
-            _ => {}
-        }
+        self.entry.set_placeholder_text(Some(prompt));
         self.source.replace(source);
         self.generation = generation;
         self.source.borrow().set_generation(generation);
@@ -452,12 +442,8 @@ impl Launcher {
         let text = self.entry.text();
         let (mode, query) = search_mode(self.mode, text.as_str());
         if mode != self.mode {
-            let source = match mode {
-                Mode::Actions => super::actions::source(),
-                Mode::Apps => source::apps(),
-                _ => unreachable!(),
-            };
-            self.load_source(mode, source);
+            let (source, prompt, _) = super::mode_source(mode);
+            self.load_source(mode, source, prompt);
             return;
         }
         if self.loading {

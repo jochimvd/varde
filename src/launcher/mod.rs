@@ -22,6 +22,16 @@ enum Mode {
     Dmenu,
 }
 
+/// The source, entry placeholder, and ordering of each mode the launcher owns.
+fn mode_source(mode: Mode) -> (Rc<dyn Source>, &'static str, bool) {
+    match mode {
+        Mode::Actions => (actions::source(), "Actions", true),
+        Mode::Apps => (source::apps(), "Search", true),
+        Mode::Clipboard => (source::clipboard(), "Clipboard", false),
+        Mode::Dmenu => unreachable!(),
+    }
+}
+
 pub struct Manager {
     launcher: RefCell<Option<Launcher>>,
     dmenu: RefCell<Option<DmenuSession>>,
@@ -63,12 +73,7 @@ impl Manager {
             self.close();
             return;
         }
-        let (source, prompt, alphabetical) = match mode {
-            Mode::Actions => (actions::source(), "Actions", true),
-            Mode::Apps => (source::apps(), "Search", true),
-            Mode::Clipboard => (source::clipboard(), "Clipboard", false),
-            Mode::Dmenu => unreachable!(),
-        };
+        let (source, prompt, alphabetical) = mode_source(mode);
         self.show(app, mode, source, prompt, alphabetical, Some(RESULT_LIMIT));
     }
 
