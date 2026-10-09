@@ -75,8 +75,16 @@ fn battery_path() -> Option<PathBuf> {
         .flatten()
         .map(|entry| entry.path())
         .find(|path| {
-            fs::read_to_string(path.join("type")).is_ok_and(|kind| kind.trim() == "Battery")
+            // Wireless peripherals also report as batteries, scoped to their device.
+            read_field(path, "type").as_deref() == Some("Battery")
+                && read_field(path, "scope").as_deref() != Some("Device")
         })
+}
+
+fn read_field(path: &Path, field: &str) -> Option<String> {
+    fs::read_to_string(path.join(field))
+        .ok()
+        .map(|value| value.trim().to_owned())
 }
 
 fn read(path: &Path) -> Option<Battery> {

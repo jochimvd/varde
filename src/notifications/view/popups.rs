@@ -70,7 +70,11 @@ impl PopupState {
         pending.sort_unstable_by_key(|notification| notification.revision);
         let mut available = MAX_POPUPS.saturating_sub(self.visible.len());
         for notification in pending {
-            if available == 0 || self.displayed.contains_key(&notification.id) {
+            let displayed_this_popup = self
+                .displayed
+                .get(&notification.id)
+                .is_some_and(|revision| *revision >= notification.popup_revision);
+            if available == 0 || displayed_this_popup {
                 continue;
             }
             available -= 1;

@@ -29,6 +29,9 @@ pub(super) enum Picture {
 pub(super) struct Notification {
     pub id: u32,
     pub revision: u64,
+    /// The revision that started the current popup, so a replacement that
+    /// pops up again is distinguishable from one updating the same popup.
+    pub popup_revision: u64,
     pub received_at: i64,
     pub app_name: String,
     pub app_icon: String,
@@ -103,16 +106,21 @@ impl Store {
             .map(|index| self.notifications[index].notification.id)
             .unwrap_or_else(|| self.allocate_id());
         let revision = self.allocate_revision();
+        // Stack tags mark on-screen displays such as volume changes, which must
+        // pop up again for every update instead of quietly updating the center.
+        let previous = replacement
+            .map(|index| &self.notifications[index])
+            .filter(|stored| incoming.tag.is_empty() || stored.tag != incoming.tag);
         let popup_deadline = (incoming.urgency != Urgency::Critical)
-            .then(|| replacement.and_then(|index| self.notifications[index].popup_deadline))
+            .then(|| previous.and_then(|stored| stored.popup_deadline))
             .flatten();
-        let show_popup = replacement
-            .map(|index| self.notifications[index].show_popup)
-            .unwrap_or(true);
+        let show_popup = previous.is_none_or(|stored| stored.show_popup);
+        let popup_revision = previous.map_or(revision, |stored| stored.notification.popup_revision);
         let stored = Stored {
             notification: Notification {
                 id,
                 revision,
+                popup_revision,
                 received_at: unix_now(),
                 app_name: incoming.app_name,
                 app_icon: incoming.app_icon,
@@ -464,6 +472,33 @@ mod tests {
         assert_eq!(updated.summary, "updated");
         assert!(updated.actions.is_empty());
         assert!(!show_popup);
+        assert_eq!(updated.popup_revision, 1);
+    }
+
+    #[test]
+    fn stack_tag_replacements_pop_up_again_after_the_timeout() {
+        let now = Instant::now();
+        let mut store = Store::default();
+        let volume = |summary: &str| Incoming {
+            app_name: "volume".into(),
+            tag: "volume".into(),
+            ..incoming(summary)
+        };
+        let id = store.notify(volume("50%"));
+        assert!(store.displayed(id, 1, now));
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT).is_empty());
+        assert!(!notification(&store, id).unwrap().1);
+
+        assert_eq!(store.notify(volume("55%")), id);
+        let (updated, show_popup) = notification(&store, id).unwrap();
+        assert!(show_popup);
+        assert_eq!(updated.popup_revision, updated.revision);
+        assert!(store.next_popup_deadline().is_none());
+
+        assert!(store.displayed(id, 2, now + POPUP_TIMEOUT));
+        assert_eq!(store.notify(volume("60%")), id);
+        assert_eq!(notification(&store, id).unwrap().0.popup_revision, 3);
+        assert!(store.next_popup_deadline().is_none());
     }
 
     #[test]
