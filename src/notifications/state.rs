@@ -13,6 +13,24 @@ pub(super) enum Urgency {
     Critical,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum Expiry {
+    #[default]
+    Default,
+    Never,
+    After(Duration),
+}
+
+impl Expiry {
+    pub fn from_millis(timeout: i32) -> Self {
+        match timeout {
+            0 => Self::Never,
+            1.. => Self::After(Duration::from_millis(timeout as u64)),
+            _ => Self::Default,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct Action {
     pub key: String,
@@ -53,6 +71,7 @@ pub(super) struct Incoming {
     pub body: String,
     pub actions: Vec<Action>,
     pub urgency: Urgency,
+    pub expiry: Expiry,
     pub desktop_entry: String,
     pub tag: String,
     pub transient: bool,
@@ -72,6 +91,7 @@ struct Stored {
     notification: Notification,
     tag: String,
     transient: bool,
+    expiry: Expiry,
     popup_deadline: Option<Instant>,
     show_popup: bool,
 }
@@ -103,9 +123,8 @@ impl Store {
             .map(|index| self.notifications[index].notification.id)
             .unwrap_or_else(|| self.allocate_id());
         let revision = self.allocate_revision();
-        let popup_deadline = (incoming.urgency != Urgency::Critical)
-            .then(|| replacement.and_then(|index| self.notifications[index].popup_deadline))
-            .flatten();
+        let popup_deadline = popup_timeout(incoming.urgency, incoming.expiry)
+            .and(replacement.and_then(|index| self.notifications[index].popup_deadline));
         let show_popup = replacement
             .map(|index| self.notifications[index].show_popup)
             .unwrap_or(true);
@@ -127,6 +146,7 @@ impl Store {
             },
             tag: incoming.tag,
             transient: incoming.transient,
+            expiry: incoming.expiry,
             popup_deadline,
             show_popup,
         };
@@ -179,9 +199,8 @@ impl Store {
         }) else {
             return false;
         };
-        stored.popup_deadline = (stored.notification.urgency != Urgency::Critical)
-            .then(|| now.checked_add(POPUP_TIMEOUT))
-            .flatten();
+        stored.popup_deadline = popup_timeout(stored.notification.urgency, stored.expiry)
+            .and_then(|timeout| now.checked_add(timeout));
         true
     }
 
@@ -267,6 +286,14 @@ impl Store {
             self.next_revision = 1;
         }
         self.next_revision
+    }
+}
+
+fn popup_timeout(urgency: Urgency, expiry: Expiry) -> Option<Duration> {
+    match (urgency, expiry) {
+        (Urgency::Critical, _) | (_, Expiry::Never) => None,
+        (_, Expiry::Default) => Some(POPUP_TIMEOUT),
+        (_, Expiry::After(timeout)) => Some(timeout),
     }
 }
 
@@ -386,6 +413,77 @@ mod tests {
         assert!(!notification(&store, low).unwrap().1);
         assert!(!notification(&store, normal).unwrap().1);
         assert!(notification(&store, critical).unwrap().1);
+    }
+
+    #[test]
+    fn reads_application_expire_timeouts() {
+        assert_eq!(Expiry::from_millis(-1), Expiry::Default);
+        assert_eq!(Expiry::from_millis(-7), Expiry::Default);
+        assert_eq!(Expiry::from_millis(0), Expiry::Never);
+        assert_eq!(
+            Expiry::from_millis(2500),
+            Expiry::After(Duration::from_millis(2500))
+        );
+    }
+
+    #[test]
+    fn popups_honor_application_expire_timeouts() {
+        let now = Instant::now();
+        let timeout = Duration::from_millis(2500);
+        let mut store = Store::default();
+        let timed = store.notify(Incoming {
+            expiry: Expiry::After(timeout),
+            ..Incoming::default()
+        });
+        let never = store.notify(Incoming {
+            expiry: Expiry::Never,
+            ..Incoming::default()
+        });
+        let critical = store.notify(Incoming {
+            urgency: Urgency::Critical,
+            expiry: Expiry::After(timeout),
+            ..Incoming::default()
+        });
+        let transient = store.notify(Incoming {
+            transient: true,
+            expiry: Expiry::After(timeout),
+            ..Incoming::default()
+        });
+        for (id, revision) in [(timed, 1), (never, 2), (critical, 3), (transient, 4)] {
+            assert!(store.displayed(id, revision, now));
+        }
+
+        assert!(
+            store
+                .hide_due_popups(now + timeout - Duration::from_millis(1))
+                .is_empty()
+        );
+        assert!(notification(&store, timed).unwrap().1);
+        assert_eq!(
+            store.hide_due_popups(now + timeout),
+            vec![(transient, CloseReason::Expired)]
+        );
+        assert!(!notification(&store, timed).unwrap().1);
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT * 100).is_empty());
+        assert!(notification(&store, never).unwrap().1);
+        assert!(notification(&store, critical).unwrap().1);
+        assert_eq!(store.next_popup_deadline(), None);
+    }
+
+    #[test]
+    fn never_expiring_replacement_cancels_the_previous_popup_timeout() {
+        let now = Instant::now();
+        let mut store = Store::default();
+        let id = store.notify(Incoming::default());
+        assert!(store.displayed(id, 1, now));
+        store.notify(Incoming {
+            replaces_id: id,
+            expiry: Expiry::Never,
+            ..Incoming::default()
+        });
+
+        assert!(store.hide_due_popups(now + POPUP_TIMEOUT).is_empty());
+        assert!(notification(&store, id).unwrap().1);
     }
 
     #[test]
