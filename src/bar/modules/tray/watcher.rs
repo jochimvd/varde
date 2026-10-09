@@ -16,7 +16,7 @@ use zbus::{
     zvariant::{OwnedObjectPath, OwnedValue},
 };
 
-use super::model::{Event, Item, ItemId, MenuItem, Toggle, ToggleKind, select_pixmap, tooltip};
+use super::model::{Event, Item, ItemId, MenuItem, Toggle, ToggleKind, tooltip, valid_pixmaps};
 use crate::background;
 
 const WATCHER_NAME: &str = "org.kde.StatusNotifierWatcher";
@@ -770,7 +770,7 @@ fn load_item(connection: &Connection, id: &ItemId) -> zbus::Result<Item> {
         status,
         tooltip,
         icon_name,
-        pixmap: select_pixmap(pixmaps),
+        pixmaps: valid_pixmaps(pixmaps),
         item_is_menu: proxy.get_property("ItemIsMenu").unwrap_or(false),
         menu_path: proxy
             .get_property::<OwnedObjectPath>("Menu")
