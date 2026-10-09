@@ -1,4 +1,18 @@
-use std::{cell::Cell, collections::HashMap, fs, io::BufReader, path::Path, rc::Rc, thread};
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    ffi::CString,
+    fs,
+    io::BufReader,
+    os::{
+        fd::{AsRawFd, FromRawFd, OwnedFd},
+        unix::ffi::OsStrExt,
+    },
+    path::Path,
+    rc::Rc,
+    thread,
+    time::Duration,
+};
 
 use gtk::prelude::*;
 use serde_json::Value;
@@ -10,6 +24,10 @@ const ICON_GAP: i32 = 7;
 const COLLAPSED_HOVER_SIZE: f32 = 12.0;
 const NODE_TYPE: &str = "PipeWire:Interface:Node";
 const SCREEN_SHARE_PREFIX: &str = "xdph-streaming-";
+const DEVICE_DIRECTORY: &str = "/dev";
+const DIRECTORY_EVENTS: u32 = libc::IN_CREATE | libc::IN_DELETE | libc::IN_ATTRIB;
+const DEVICE_EVENTS: u32 = libc::IN_OPEN | libc::IN_CLOSE_WRITE | libc::IN_CLOSE_NOWRITE;
+const SETTLE_DELAY: Duration = Duration::from_millis(100);
 
 pub fn widget() -> gtk::Box {
     let privacy = gtk::Box::builder()
@@ -200,6 +218,7 @@ fn monitor(sender: &async_channel::Sender<Change>) -> bool {
 }
 
 fn monitor_direct_cameras(sender: &async_channel::Sender<Change>) {
+    let mut devices = DeviceWatch::new();
     let mut current = Vec::new();
     loop {
         let cameras = direct_cameras();
@@ -212,8 +231,140 @@ fn monitor_direct_cameras(sender: &async_channel::Sender<Change>) {
             }
             current = cameras;
         }
-        thread::sleep(background::RETRY_DELAY);
+        if !devices.as_mut().is_some_and(DeviceWatch::wait) {
+            devices = None;
+            thread::sleep(background::RETRY_DELAY);
+        }
     }
+}
+
+/// Wakes the camera scan only when a video device is opened, closed, added, or
+/// removed, since scanning every process's descriptors is expensive.
+struct DeviceWatch {
+    fd: OwnedFd,
+    directory: i32,
+    complete: bool,
+}
+
+impl DeviceWatch {
+    fn new() -> Option<Self> {
+        let fd = unsafe { libc::inotify_init1(libc::IN_CLOEXEC) };
+        if fd < 0 {
+            return None;
+        }
+        let mut watch = Self {
+            fd: unsafe { OwnedFd::from_raw_fd(fd) },
+            directory: -1,
+            complete: false,
+        };
+        watch.directory = watch.add(Path::new(DEVICE_DIRECTORY), DIRECTORY_EVENTS);
+        watch.complete = watch.watch_devices();
+        Some(watch)
+    }
+
+    fn add(&self, path: &Path, mask: u32) -> i32 {
+        let Ok(path) = CString::new(path.as_os_str().as_bytes()) else {
+            return -1;
+        };
+        unsafe { libc::inotify_add_watch(self.fd.as_raw_fd(), path.as_ptr(), mask) }
+    }
+
+    /// Watches every video device, reporting whether nothing was missed.
+    fn watch_devices(&self) -> bool {
+        let Ok(entries) = fs::read_dir(DEVICE_DIRECTORY) else {
+            return false;
+        };
+        let mut complete = self.directory >= 0;
+        for entry in entries.flatten() {
+            if entry.file_name().to_str().is_some_and(is_video_device) {
+                complete &= self.add(&entry.path(), DEVICE_EVENTS) >= 0;
+            }
+        }
+        complete
+    }
+
+    /// Blocks until a video device may have changed, polling instead whenever
+    /// a device could not be watched. Returns false once the watch is broken.
+    fn wait(&mut self) -> bool {
+        let timeout = if self.complete {
+            -1
+        } else {
+            background::RETRY_DELAY.as_millis() as i32
+        };
+        loop {
+            match self.poll(timeout) {
+                Some(true) => {}
+                Some(false) => break,
+                None => return false,
+            }
+            match self.read_events() {
+                Some(true) => break,
+                Some(false) => {}
+                None => return false,
+            }
+        }
+        // Opening a device tends to come with further opens and closes, so
+        // they are left to settle into a single scan.
+        thread::sleep(SETTLE_DELAY);
+        while self.poll(0) == Some(true) {
+            if self.read_events().is_none() {
+                return false;
+            }
+        }
+        self.complete = self.watch_devices();
+        true
+    }
+
+    fn poll(&self, timeout: i32) -> Option<bool> {
+        let mut fd = libc::pollfd {
+            fd: self.fd.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        match unsafe { libc::poll(&mut fd, 1, timeout) } {
+            0 => Some(false),
+            1.. => Some(true),
+            _ if interrupted() => Some(false),
+            _ => None,
+        }
+    }
+
+    fn read_events(&self) -> Option<bool> {
+        let mut buffer = [0; 4096];
+        let length = unsafe {
+            libc::read(
+                self.fd.as_raw_fd(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+            )
+        };
+        if length < 0 {
+            return interrupted().then_some(false);
+        }
+        Some(devices_changed(&buffer[..length as usize], self.directory))
+    }
+}
+
+fn interrupted() -> bool {
+    std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted
+}
+
+/// Reads raw inotify events, ignoring unrelated entries in the device directory.
+fn devices_changed(mut events: &[u8], directory: i32) -> bool {
+    const HEADER: usize = std::mem::size_of::<libc::inotify_event>();
+    let mut changed = false;
+    while events.len() >= HEADER {
+        let field = |offset: usize| events[offset..offset + 4].try_into().unwrap();
+        let watch = i32::from_ne_bytes(field(0));
+        let length = u32::from_ne_bytes(field(12)) as usize;
+        let Some(name) = events.get(HEADER..HEADER + length) else {
+            break;
+        };
+        let name = name.split(|byte| *byte == 0).next().unwrap_or_default();
+        changed |= watch != directory || std::str::from_utf8(name).is_ok_and(is_video_device);
+        events = &events[HEADER + length..];
+    }
+    changed
 }
 
 fn direct_cameras() -> Vec<String> {
@@ -248,10 +399,14 @@ fn direct_cameras() -> Vec<String> {
 }
 
 fn video_device(path: &Path) -> Option<&str> {
-    let device = path.strip_prefix("/dev").ok()?.to_str()?;
-    let number = device.strip_prefix("video")?;
-    (!number.is_empty() && number.chars().all(|character| character.is_ascii_digit()))
-        .then_some(device)
+    let device = path.strip_prefix(DEVICE_DIRECTORY).ok()?.to_str()?;
+    is_video_device(device).then_some(device)
+}
+
+fn is_video_device(name: &str) -> bool {
+    name.strip_prefix("video").is_some_and(|number| {
+        !number.is_empty() && number.chars().all(|character| character.is_ascii_digit())
+    })
 }
 
 fn apply_objects(usages: &mut HashMap<u64, Usage>, objects: &[Value]) {
@@ -474,6 +629,30 @@ mod tests {
         assert_eq!(video_device(Path::new("/dev/video")), None);
         assert_eq!(video_device(Path::new("/dev/video-camera")), None);
         assert_eq!(video_device(Path::new("/tmp/video0")), None);
+    }
+
+    #[test]
+    fn device_events_ignore_unrelated_device_directory_entries() {
+        fn event(watch: i32, name: &str) -> Vec<u8> {
+            let mut name = name.as_bytes().to_vec();
+            name.resize(name.len().next_multiple_of(16), 0);
+            let mut event = Vec::new();
+            event.extend_from_slice(&watch.to_ne_bytes());
+            event.extend_from_slice(&libc::IN_CREATE.to_ne_bytes());
+            event.extend_from_slice(&0u32.to_ne_bytes());
+            event.extend_from_slice(&(name.len() as u32).to_ne_bytes());
+            event.extend_from_slice(&name);
+            event
+        }
+
+        let unrelated = [event(1, "ttyS0"), event(1, "video")].concat();
+        assert!(!devices_changed(&unrelated, 1));
+        assert!(devices_changed(
+            &[unrelated, event(1, "video2")].concat(),
+            1
+        ));
+        assert!(devices_changed(&event(2, ""), 1));
+        assert!(devices_changed(&event(-1, ""), 1));
     }
 
     #[test]

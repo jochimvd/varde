@@ -1,8 +1,9 @@
 use std::{
+    collections::HashMap,
     io::{Cursor, Write},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -14,9 +15,18 @@ use super::source::{
 use async_channel::{Receiver, Sender};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_IMAGE_AREA: i64 = 7680 * 4320;
 
+/// Image sizes from the history listing, so oversized images are skipped
+/// before they are decoded.
+type ImageSizes = Arc<Mutex<HashMap<String, (i32, i32)>>>;
+
+/// Thumbnails have a worker of their own, so the selected item's preview never
+/// waits behind a page of thumbnail decodes.
 pub(super) struct Clipboard {
     previews: Sender<PreviewRequest>,
+    thumbnails: Sender<PreviewRequest>,
     commands: Sender<CommandRequest>,
     generation: Arc<AtomicU64>,
 }
@@ -52,18 +62,27 @@ enum CommandRequest {
 impl Clipboard {
     pub fn new() -> Self {
         let (previews, preview_receiver) = async_channel::unbounded();
+        let (thumbnails, thumbnail_receiver) = async_channel::unbounded();
         let (commands, command_receiver) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(0));
-        let worker_generation = Arc::clone(&generation);
-        crate::background::spawn("clipboard-previews", move || {
-            preview_worker(preview_receiver, worker_generation)
-        });
+        let sizes = ImageSizes::default();
+        for (name, receiver) in [
+            ("clipboard-previews", preview_receiver),
+            ("clipboard-thumbnails", thumbnail_receiver),
+        ] {
+            let worker_generation = Arc::clone(&generation);
+            let worker_sizes = Arc::clone(&sizes);
+            crate::background::spawn(name, move || {
+                preview_worker(receiver, worker_generation, worker_sizes)
+            });
+        }
         let worker_generation = Arc::clone(&generation);
         crate::background::spawn("clipboard-commands", move || {
-            command_worker(command_receiver, worker_generation)
+            command_worker(command_receiver, worker_generation, sizes)
         });
         Self {
             previews,
+            thumbnails,
             commands,
             generation,
         }
@@ -118,7 +137,11 @@ impl Source for Clipboard {
         generation: u64,
         result: Sender<Event>,
     ) -> bool {
-        self.previews
+        let worker = match kind {
+            ImageKind::Thumbnail => &self.thumbnails,
+            ImageKind::Preview => &self.previews,
+        };
+        worker
             .try_send(PreviewRequest::Image {
                 generation,
                 id: id.to_string(),
@@ -168,10 +191,11 @@ fn parse_line(line: &[u8]) -> Option<LoadedItem> {
     };
 
     if let Some(dimensions) = image_dimensions(preview) {
+        let (width, height) = parse_dimensions(dimensions)?;
         return Some(LoadedItem {
             id: id.to_string(),
             title: format!("Image · {}", dimensions.replace('x', "×")),
-            visual: LoadedVisual::Image,
+            visual: LoadedVisual::Image { width, height },
             search_terms: vec!["image".into(), preview.into()],
         });
     }
@@ -217,7 +241,11 @@ fn parse_dimensions(value: &str) -> Option<(i32, i32)> {
     (width > 0 && height > 0).then_some((width, height))
 }
 
-fn preview_worker(receiver: Receiver<PreviewRequest>, generation: Arc<AtomicU64>) {
+fn preview_worker(
+    receiver: Receiver<PreviewRequest>,
+    generation: Arc<AtomicU64>,
+    sizes: ImageSizes,
+) {
     while let Ok(request) = receiver.recv_blocking() {
         let request_generation = match &request {
             PreviewRequest::Image { generation, .. } | PreviewRequest::Text { generation, .. } => {
@@ -236,7 +264,8 @@ fn preview_worker(receiver: Receiver<PreviewRequest>, generation: Arc<AtomicU64>
                 height,
                 result,
             } => {
-                let pixels = decode_image(&id, kind, width, height);
+                let size = sizes.lock().unwrap().get(&id).copied();
+                let pixels = decode_image(&id, size, kind, width, height);
                 if generation.load(Ordering::Acquire) == request_generation {
                     let _ = result.send_blocking(Event::Image {
                         generation: request_generation,
@@ -264,7 +293,11 @@ fn preview_worker(receiver: Receiver<PreviewRequest>, generation: Arc<AtomicU64>
     }
 }
 
-fn command_worker(receiver: Receiver<CommandRequest>, generation: Arc<AtomicU64>) {
+fn command_worker(
+    receiver: Receiver<CommandRequest>,
+    generation: Arc<AtomicU64>,
+    sizes: ImageSizes,
+) {
     while let Ok(request) = receiver.recv_blocking() {
         let request_generation = match &request {
             CommandRequest::Items { generation, .. }
@@ -279,6 +312,9 @@ fn command_worker(receiver: Receiver<CommandRequest>, generation: Arc<AtomicU64>
                 result,
             } => {
                 let items = load_items();
+                if let Ok(items) = &items {
+                    *sizes.lock().unwrap() = image_sizes(items);
+                }
                 if generation.load(Ordering::Acquire) == request_generation {
                     let _ = result.send_blocking(Event::Items {
                         generation: request_generation,
@@ -309,13 +345,35 @@ fn load_items() -> Result<Vec<LoadedItem>, String> {
     parse_list(&output)
 }
 
+fn image_sizes(items: &[LoadedItem]) -> HashMap<String, (i32, i32)> {
+    items
+        .iter()
+        .filter_map(|item| match item.visual {
+            LoadedVisual::Image { width, height } => Some((item.id.clone(), (width, height))),
+            _ => None,
+        })
+        .collect()
+}
+
 fn decode_text(id: &str) -> Option<String> {
     let bytes = crate::background::command_output("cliphist", &["decode", id], COMMAND_TIMEOUT)?;
     String::from_utf8(bytes).ok()
 }
 
-fn decode_image(id: &str, kind: ImageKind, width: i32, height: i32) -> Option<ImagePixels> {
+fn decode_image(
+    id: &str,
+    size: Option<(i32, i32)>,
+    kind: ImageKind,
+    width: i32,
+    height: i32,
+) -> Option<ImagePixels> {
+    if !size.is_some_and(within_limits) {
+        return None;
+    }
     let bytes = crate::background::command_output("cliphist", &["decode", id], COMMAND_TIMEOUT)?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
     let pixbuf = gdk_pixbuf::Pixbuf::from_read(Cursor::new(bytes)).ok()?;
     let image = match kind {
         ImageKind::Thumbnail => crop_thumbnail(&pixbuf, width, height)?,
@@ -334,6 +392,10 @@ fn decode_image(id: &str, kind: ImageKind, width: i32, height: i32) -> Option<Im
     })
 }
 
+fn within_limits((width, height): (i32, i32)) -> bool {
+    i64::from(width) * i64::from(height) <= MAX_IMAGE_AREA
+}
+
 fn crop_thumbnail(
     pixbuf: &gdk_pixbuf::Pixbuf,
     target_width: i32,
@@ -343,13 +405,28 @@ fn crop_thumbnail(
         .max(f64::from(target_height) / f64::from(pixbuf.height()));
     let width = (f64::from(pixbuf.width()) * scale).ceil() as i32;
     let height = (f64::from(pixbuf.height()) * scale).ceil() as i32;
-    let scaled = pixbuf.scale_simple(width, height, gdk_pixbuf::InterpType::Bilinear)?;
-    Some(scaled.new_subpixbuf(
-        (width - target_width) / 2,
-        (height - target_height) / 2,
+    let thumbnail = gdk_pixbuf::Pixbuf::new(
+        gdk_pixbuf::Colorspace::Rgb,
+        pixbuf.has_alpha(),
+        8,
         target_width,
         target_height,
-    ))
+    )?;
+    // Only the visible part is scaled, since a very thin image would otherwise
+    // be scaled up to an enormous size first.
+    pixbuf.scale(
+        &thumbnail,
+        0,
+        0,
+        target_width,
+        target_height,
+        -f64::from((width - target_width) / 2),
+        -f64::from((height - target_height) / 2),
+        f64::from(width) / f64::from(pixbuf.width()),
+        f64::from(height) / f64::from(pixbuf.height()),
+        gdk_pixbuf::InterpType::Bilinear,
+    );
+    Some(thumbnail)
 }
 
 fn fit_preview(
@@ -414,7 +491,17 @@ mod tests {
             ["42", "41", "40"]
         );
         assert_eq!(items[1].title, "Image · 474×598");
-        assert!(matches!(items[1].visual, LoadedVisual::Image));
+        assert!(matches!(
+            items[1].visual,
+            LoadedVisual::Image {
+                width: 474,
+                height: 598
+            }
+        ));
+        assert_eq!(
+            image_sizes(&items),
+            HashMap::from([("41".to_string(), (474, 598))])
+        );
     }
 
     #[test]
@@ -443,6 +530,15 @@ mod tests {
     }
 
     #[test]
+    fn limits_decoded_image_area() {
+        assert!(within_limits((7680, 4320)));
+        assert!(within_limits((1, 33_177_600)));
+        assert!(!within_limits((7681, 4320)));
+        assert!(!within_limits((i32::MAX, i32::MAX)));
+        assert!(decode_image("42", None, ImageKind::Thumbnail, 56, 36).is_none());
+    }
+
+    #[test]
     fn crops_thumbnails_and_contains_previews() {
         let wide =
             gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 1_000, 200).unwrap();
@@ -453,12 +549,51 @@ mod tests {
     }
 
     #[test]
+    fn crops_thumbnails_like_scaling_the_whole_image() {
+        let source =
+            gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 97, 211).unwrap();
+        for y in 0..source.height() {
+            for x in 0..source.width() {
+                source.put_pixel(
+                    x as u32,
+                    y as u32,
+                    (x * 2) as u8,
+                    (y * 3) as u8,
+                    (x ^ y) as u8,
+                    0,
+                );
+            }
+        }
+        let scaled = source
+            .scale_simple(56, 122, gdk_pixbuf::InterpType::Bilinear)
+            .unwrap();
+        let expected = scaled.new_subpixbuf(0, 43, 56, 36).copy().unwrap();
+
+        let thumbnail = crop_thumbnail(&source, 56, 36).unwrap();
+
+        assert_eq!(
+            thumbnail.read_pixel_bytes().as_ref(),
+            expected.read_pixel_bytes().as_ref()
+        );
+    }
+
+    #[test]
+    fn crops_very_thin_images() {
+        let thin =
+            gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 1, 10_000).unwrap();
+        let thumbnail = crop_thumbnail(&thin, 56, 36).unwrap();
+        assert_eq!((thumbnail.width(), thumbnail.height()), (56, 36));
+    }
+
+    #[test]
     fn dropping_clipboard_advances_generation() {
         let (previews, _) = async_channel::unbounded();
+        let (thumbnails, _) = async_channel::unbounded();
         let (commands, _) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(7));
         let clipboard = Clipboard {
             previews,
+            thumbnails,
             commands,
             generation: Arc::clone(&generation),
         };
@@ -471,17 +606,24 @@ mod tests {
     #[test]
     fn reports_unavailable_preview_worker() {
         let (previews, preview_receiver) = async_channel::unbounded();
+        let (thumbnails, thumbnail_receiver) = async_channel::unbounded();
         let (commands, _command_receiver) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(7));
         let clipboard = Clipboard {
             previews,
+            thumbnails,
             commands,
             generation,
         };
-        drop(preview_receiver);
+        drop(thumbnail_receiver);
 
         let (image_result, _) = async_channel::unbounded();
         assert!(!clipboard.request_image("42", ImageKind::Thumbnail, 56, 36, 7, image_result,));
+        let (image_result, _) = async_channel::unbounded();
+        assert!(clipboard.request_image("42", ImageKind::Preview, 300, 300, 7, image_result));
+        drop(preview_receiver);
+        let (image_result, _) = async_channel::unbounded();
+        assert!(!clipboard.request_image("42", ImageKind::Preview, 300, 300, 7, image_result));
         let (text_result, _) = async_channel::unbounded();
         assert!(!clipboard.request_text("42", 7, text_result));
     }

@@ -10,7 +10,7 @@ use std::{cell::RefCell, rc::Rc};
 use gtk::glib;
 
 use source::{Activation, Event, Outcome, Source};
-use view::Launcher;
+use view::{Launcher, ThumbnailCache};
 
 const RESULT_LIMIT: usize = 200;
 
@@ -25,6 +25,7 @@ enum Mode {
 pub struct Manager {
     launcher: RefCell<Option<Launcher>>,
     dmenu: RefCell<Option<DmenuSession>>,
+    thumbnails: Rc<RefCell<ThumbnailCache>>,
 }
 
 impl Manager {
@@ -32,6 +33,7 @@ impl Manager {
         Rc::new(Self {
             launcher: RefCell::new(None),
             dmenu: RefCell::new(None),
+            thumbnails: Rc::default(),
         })
     }
 

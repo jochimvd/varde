@@ -43,7 +43,7 @@ pub(super) struct LoadedItem {
 
 pub(super) enum LoadedVisual {
     None,
-    Image,
+    Image { width: i32, height: i32 },
     Text,
 }
 
@@ -54,7 +54,7 @@ impl From<LoadedItem> for Item {
             title: item.title,
             visual: match item.visual {
                 LoadedVisual::None => Visual::None,
-                LoadedVisual::Image => Visual::Image,
+                LoadedVisual::Image { .. } => Visual::Image,
                 LoadedVisual::Text => Visual::Text,
             },
             search_terms: item.search_terms,
