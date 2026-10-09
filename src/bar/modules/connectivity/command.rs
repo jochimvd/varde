@@ -2,7 +2,6 @@ use std::{
     cell::Cell,
     process::Command,
     rc::Rc,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -14,8 +13,9 @@ use crate::background;
 const REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 
 thread_local! {
-    /// Every refresh runs on a thread of its own, so its deadline can live there
-    /// and bound the whole refresh rather than each command it happens to run.
+    /// Every module refreshes on a thread of its own, so the current refresh's
+    /// deadline can live there and bound the whole refresh rather than each
+    /// command it happens to run.
     static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
 }
 
@@ -87,60 +87,18 @@ pub(super) fn on_click(button: &gtk::Button, action: impl Fn(u32) + 'static) {
     }
 }
 
-pub(super) fn watch<T, Fetch, Update>(
-    interval: Duration,
-    fetch: Fetch,
-    mut update: Update,
-) -> Refresh
+pub(super) fn watch<T, Fetch, Update>(interval: Duration, fetch: Fetch, update: Update) -> Refresh
 where
     T: Send + 'static,
-    Fetch: Fn() -> T + Send + Sync + 'static,
+    Fetch: Fn() -> T + Send + 'static,
     Update: FnMut(T) + 'static,
 {
     let (result_sender, result_receiver) = async_channel::unbounded();
     let (refresh_sender, refresh_receiver) = async_channel::unbounded();
-    let fetch = Arc::new(fetch);
-    let running = Rc::new(Cell::new(false));
-    let pending = Rc::new(Cell::new(false));
-    let launch: Rc<dyn Fn()> = Rc::new({
-        let fetch = Arc::clone(&fetch);
-        let result_sender = result_sender.clone();
-        let running = Rc::clone(&running);
-        move || {
-            let fetch = Arc::clone(&fetch);
-            let result_sender = result_sender.clone();
-            // A failed spawn never reports back, so only mark the module busy once it started.
-            let started = background::spawn("module-refresh", move || {
-                DEADLINE.set(Some(Instant::now() + REFRESH_TIMEOUT));
-                let _ = result_sender.send_blocking(fetch());
-            });
-            running.set(started);
-        }
+    background::spawn("module-refresh", move || {
+        refresh_worker(refresh_receiver, result_sender, fetch)
     });
-
-    background::listen(refresh_receiver, {
-        let launch = Rc::clone(&launch);
-        let running = Rc::clone(&running);
-        let pending = Rc::clone(&pending);
-        move |_| {
-            if running.get() {
-                pending.set(true);
-            } else {
-                launch();
-            }
-        }
-    });
-
-    background::listen(result_receiver, {
-        let launch = Rc::clone(&launch);
-        move |value| {
-            update(value);
-            running.set(false);
-            if pending.replace(false) {
-                launch();
-            }
-        }
-    });
+    background::listen(result_receiver, update);
 
     let refresh = Refresh(refresh_sender);
     refresh.request();
@@ -151,6 +109,21 @@ where
     });
 
     refresh
+}
+
+fn refresh_worker<T>(
+    requests: async_channel::Receiver<()>,
+    results: async_channel::Sender<T>,
+    fetch: impl Fn() -> T,
+) {
+    while requests.recv_blocking().is_ok() {
+        // Requests made while the previous refresh ran are all served by this one.
+        while requests.try_recv().is_ok() {}
+        DEADLINE.set(Some(Instant::now() + REFRESH_TIMEOUT));
+        if results.send_blocking(fetch()).is_err() {
+            break;
+        }
+    }
 }
 
 pub(super) fn spawn_shell(command: &str) {
@@ -209,4 +182,29 @@ pub(super) fn strip_ansi(text: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesces_queued_refreshes_and_sets_their_deadline() {
+        let (requests, request_receiver) = async_channel::unbounded();
+        let (results, result_receiver) = async_channel::unbounded();
+        for _ in 0..3 {
+            requests.try_send(()).unwrap();
+        }
+        drop(requests);
+        let fetches = Cell::new(0);
+
+        refresh_worker(request_receiver, results, || {
+            fetches.set(fetches.get() + 1);
+            DEADLINE.get().is_some()
+        });
+
+        assert_eq!(fetches.get(), 1);
+        assert_eq!(result_receiver.try_recv(), Ok(true));
+        assert!(result_receiver.try_recv().is_err());
+    }
 }
