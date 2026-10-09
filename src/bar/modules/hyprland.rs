@@ -3,7 +3,6 @@ use std::{
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, Sender},
     time::{Duration, Instant},
 };
 
@@ -44,14 +43,11 @@ pub fn widget() -> gtk::Box {
     root.append(&window);
 
     let (updates_tx, updates_rx) = async_channel::unbounded();
-    let (commands_tx, commands_rx) = mpsc::channel();
-    background::spawn("hyprland-events", move || {
-        run_worker(updates_tx, commands_rx)
-    });
+    background::spawn("hyprland-events", move || run_worker(updates_tx));
     let mut state = State::default();
     background::listen(updates_rx, move |update| match update {
         Update::State(next) => {
-            render(&workspaces, &window, &state, &next, &commands_tx);
+            render(&workspaces, &window, &state, &next);
             state = next;
         }
         Update::ActiveWorkspace(id) => {
@@ -122,6 +118,17 @@ impl TitleUpdates {
         self.last_sent = Some(now);
         Some(title)
     }
+
+    /// How long a pending title still has to wait, or `None` when none is.
+    fn delay(&self, now: Instant) -> Option<Duration> {
+        self.pending.as_ref()?;
+        let ready = self.last_sent? + TITLE_UPDATE_INTERVAL;
+        Some(
+            ready
+                .saturating_duration_since(now)
+                .max(Duration::from_millis(1)),
+        )
+    }
 }
 
 #[derive(Deserialize)]
@@ -147,10 +154,6 @@ struct ActiveWindow {
     title: String,
 }
 
-enum Command {
-    Activate(WorkspaceSelector),
-}
-
 #[derive(Debug, Eq, PartialEq)]
 enum Event {
     Refresh,
@@ -161,21 +164,14 @@ enum Event {
     Ignore,
 }
 
-#[derive(Clone)]
 enum WorkspaceSelector {
     Id(i64),
     Name(String),
 }
 
-fn render(
-    workspaces: &gtk::Box,
-    window: &gtk::Label,
-    current: &State,
-    next: &State,
-    commands: &Sender<Command>,
-) {
+fn render(workspaces: &gtk::Box, window: &gtk::Label, current: &State, next: &State) {
     if workspace_structure_changed(current, next) {
-        rebuild_workspaces(workspaces, next, commands);
+        rebuild_workspaces(workspaces, next);
     } else if current.active_id != next.active_id || current.workspaces != next.workspaces {
         update_workspace_classes(workspaces, next);
     }
@@ -195,7 +191,7 @@ fn update_window_title(window: &gtk::Label, state: &State) {
     }
 }
 
-fn rebuild_workspaces(workspaces: &gtk::Box, state: &State, commands: &Sender<Command>) {
+fn rebuild_workspaces(workspaces: &gtk::Box, state: &State) {
     while let Some(child) = workspaces.first_child() {
         workspaces.remove(&child);
     }
@@ -210,14 +206,18 @@ fn rebuild_workspaces(workspaces: &gtk::Box, state: &State, commands: &Sender<Co
             button.add_css_class("urgent");
         }
 
-        let commands = commands.clone();
-        let selector = if workspace.id > 0 {
+        let command = activation_command(&if workspace.id > 0 {
             WorkspaceSelector::Id(workspace.id)
         } else {
             WorkspaceSelector::Name(workspace.name.clone())
-        };
+        });
         button.connect_clicked(move |_| {
-            let _ = commands.send(Command::Activate(selector.clone()));
+            let command = command.clone();
+            background::spawn("workspace-activate", move || {
+                if let Ok((request_socket, _)) = socket_paths() {
+                    let _ = request(&request_socket, &command);
+                }
+            });
         });
         workspaces.append(&button);
     }
@@ -256,12 +256,12 @@ fn workspace_structure_changed(current: &State, next: &State) -> bool {
             .any(|(current, next)| current.id != next.id || current.name != next.name)
 }
 
-fn run_worker(updates: async_channel::Sender<Update>, commands: Receiver<Command>) {
+fn run_worker(updates: async_channel::Sender<Update>) {
     loop {
         let mut title_updates = TitleUpdates::default();
         let mut active_address = refresh(&updates).unwrap_or_default();
 
-        let Ok((request_socket, event_socket)) = socket_paths() else {
+        let Ok((_, event_socket)) = socket_paths() else {
             std::thread::sleep(background::RETRY_DELAY);
             continue;
         };
@@ -270,21 +270,16 @@ fn run_worker(updates: async_channel::Sender<Update>, commands: Receiver<Command
             std::thread::sleep(background::RETRY_DELAY);
             continue;
         };
-        let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
         let mut events = BufReader::new(stream);
 
-        // The read timeout can cut a line in half, so the partial event is kept
-        // across reads instead of being handled as an event of its own.
+        // A pending title's read timeout can cut a line in half, so the partial
+        // event is kept across reads instead of being handled as an event of its own.
         let mut line = Vec::new();
         loop {
             send_ready_title(&updates, &mut title_updates);
-
-            while let Ok(command) = commands.try_recv() {
-                match command {
-                    Command::Activate(selector) => {
-                        let _ = request(&request_socket, &activation_command(&selector));
-                    }
-                }
+            let delay = title_updates.delay(Instant::now());
+            if events.get_ref().set_read_timeout(delay).is_err() {
+                break;
             }
 
             match events.read_until(b'\n', &mut line) {
@@ -337,15 +332,16 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
     let active_window: ActiveWindow = request_json(&request_socket, "j/activewindow")?;
     let submap = request(&request_socket, "repl ':' .. hl.get_current_submap()")?;
     let submap = parse_submap_query(&submap)?;
-    for workspace in workspaces.iter_mut().filter(|workspace| {
-        workspace.monitor == active_workspace.monitor && !workspace.name.starts_with("special:")
-    }) {
-        workspace.urgent = request(
-            &request_socket,
-            &format!("repl hl.get_workspace({}).has_urgent", workspace.id),
-        )?
-        .trim()
-            == "true";
+    let mut shown: Vec<_> = workspaces
+        .iter_mut()
+        .filter(|workspace| is_shown(workspace, &active_workspace))
+        .collect();
+    if !shown.is_empty() {
+        let ids = shown.iter().map(|workspace| workspace.id);
+        let urgent = request(&request_socket, &urgency_query(ids))?;
+        for (workspace, urgent) in shown.iter_mut().zip(parse_urgency(&urgent)) {
+            workspace.urgent = urgent;
+        }
     }
     let active_address = normalize_address(&active_window.address);
     let state = state_from_parts(workspaces, active_workspace, active_window, submap);
@@ -400,6 +396,30 @@ fn activation_command(selector: &WorkspaceSelector) -> String {
     }
 }
 
+fn is_shown(workspace: &WorkspaceInfo, active_workspace: &ActiveWorkspace) -> bool {
+    workspace.monitor == active_workspace.monitor && !workspace.name.starts_with("special:")
+}
+
+fn urgency_query(ids: impl Iterator<Item = i64>) -> String {
+    let ids = ids.map(|id| id.to_string()).collect::<Vec<_>>().join(", ");
+    format!(
+        "repl (function() local urgent = {{}} for _, id in ipairs({{ {ids} }}) do \
+         local workspace = hl.get_workspace(id) \
+         urgent[#urgent + 1] = tostring(workspace ~= nil and workspace.has_urgent == true) \
+         end return table.concat(urgent, ',') end)()"
+    )
+}
+
+/// Reads the urgency of each queried workspace in order; anything Hyprland
+/// could not answer counts as not urgent.
+fn parse_urgency(response: &str) -> impl Iterator<Item = bool> + '_ {
+    response
+        .trim()
+        .split(',')
+        .map(|urgent| urgent == "true")
+        .chain(std::iter::repeat(false))
+}
+
 fn state_from_parts(
     workspaces: Vec<WorkspaceInfo>,
     active_workspace: ActiveWorkspace,
@@ -408,9 +428,7 @@ fn state_from_parts(
 ) -> State {
     let mut workspaces: Vec<_> = workspaces
         .into_iter()
-        .filter(|workspace| {
-            workspace.monitor == active_workspace.monitor && !workspace.name.starts_with("special:")
-        })
+        .filter(|workspace| is_shown(workspace, &active_workspace))
         .map(|workspace| Workspace {
             id: workspace.id,
             name: workspace.name,
@@ -634,6 +652,40 @@ mod tests {
         assert_eq!(
             titles.take_ready(start + TITLE_UPDATE_INTERVAL),
             Some("latest".into())
+        );
+    }
+
+    #[test]
+    fn only_waits_for_pending_titles() {
+        let start = Instant::now();
+        let mut titles = TitleUpdates::default();
+        assert_eq!(titles.delay(start), None);
+
+        titles.queue("first".into());
+        assert_eq!(titles.take_ready(start), Some("first".into()));
+        assert_eq!(titles.delay(start), None);
+
+        titles.queue("second".into());
+        assert_eq!(
+            titles.delay(start + TITLE_UPDATE_INTERVAL / 5),
+            Some(TITLE_UPDATE_INTERVAL * 4 / 5)
+        );
+        assert_eq!(
+            titles.delay(start + TITLE_UPDATE_INTERVAL),
+            Some(Duration::from_millis(1))
+        );
+    }
+
+    #[test]
+    fn queries_and_parses_workspace_urgency_in_order() {
+        assert!(urgency_query([1, -1337].into_iter()).contains("ipairs({ 1, -1337 })"));
+        assert_eq!(
+            parse_urgency("false,true\n").take(3).collect::<Vec<_>>(),
+            [false, true, false]
+        );
+        assert_eq!(
+            parse_urgency("error: invalid").take(2).collect::<Vec<_>>(),
+            [false, false]
         );
     }
 
