@@ -1,9 +1,12 @@
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use gtk::prelude::*;
 
 use super::{
-    model::{Event, ICON_SIZE, Item, MenuItem, ToggleKind, scale_pixmap},
+    model::{Event, ICON_SIZE, Item, ItemId, MenuItem, ToggleKind, scale_pixmap},
     watcher,
 };
 use crate::background;
@@ -25,53 +28,60 @@ pub fn widget(menu_visibility: impl Fn(bool) + 'static) -> gtk::Box {
     });
     background::listen(receiver, {
         let tray = tray.clone();
-        let shared = shared.clone();
-        let open_menus = open_menus.clone();
-        let menu_visibility = menu_visibility.clone();
-        let mut items = Vec::new();
-        move |event| {
-            apply_event(&mut items, event);
-            rebuild(&tray, &items, &shared, &open_menus, &menu_visibility);
+        let mut entries = Vec::<Entry>::new();
+        move |event| match event {
+            Event::Upsert(item) => {
+                let index = entries.iter().position(|entry| entry.id == item.id);
+                if item.status == "Passive" {
+                    if let Some(index) = index {
+                        entries.remove(index).destroy(&tray);
+                    }
+                } else if let Some(index) = index {
+                    entries[index].update(&item);
+                } else {
+                    let entry = Entry::new(&item, &shared, &open_menus, &menu_visibility);
+                    tray.append(&entry.target);
+                    entries.push(entry);
+                }
+            }
+            Event::Remove(id) => {
+                if let Some(index) = entries.iter().position(|entry| entry.id == id) {
+                    entries.remove(index).destroy(&tray);
+                }
+            }
         }
     });
 
     tray
 }
 
-fn apply_event(items: &mut Vec<Item>, event: Event) {
-    match event {
-        Event::Upsert(item) => {
-            if item.status == "Passive" {
-                items.retain(|current| current.id != item.id);
-            } else if let Some(current) = items.iter_mut().find(|current| current.id == item.id) {
-                *current = item;
-            } else {
-                items.push(item);
-            }
-        }
-        Event::Remove(id) => items.retain(|item| item.id != id),
-    }
+/// The widgets for one tray item, kept across updates so an open menu
+/// survives changes to the item or its neighbours.
+struct Entry {
+    id: ItemId,
+    target: gtk::Box,
+    image: gtk::Image,
+    menu: gtk::Popover,
+    item_is_menu: Rc<Cell<bool>>,
+    menu_path: Rc<RefCell<Option<String>>>,
 }
 
-fn rebuild(
-    tray: &gtk::Box,
-    items: &[Item],
-    shared: &watcher::SharedConnection,
-    open_menus: &Rc<Cell<u32>>,
-    menu_visibility: &Rc<dyn Fn(bool)>,
-) {
-    while let Some(child) = tray.first_child() {
-        tray.remove(&child);
-    }
-    for item in items {
+impl Entry {
+    fn new(
+        item: &Item,
+        shared: &watcher::SharedConnection,
+        open_menus: &Rc<Cell<u32>>,
+        menu_visibility: &Rc<dyn Fn(bool)>,
+    ) -> Self {
         let target = gtk::Box::builder()
             .focusable(false)
             .valign(gtk::Align::Center)
             .build();
         target.set_cursor_from_name(Some("pointer"));
         target.add_css_class("tray-icon");
-        target.set_tooltip_text(item.tooltip.as_deref());
-        target.append(&icon(item));
+        let image = gtk::Image::new();
+        image.set_pixel_size(ICON_SIZE);
+        target.append(&image);
 
         let menu = gtk::Popover::builder()
             .autohide(true)
@@ -99,45 +109,53 @@ fn rebuild(
                 menu_visibility(count > 0);
             }
         });
+
+        let item_is_menu = Rc::new(Cell::new(false));
+        let menu_path = Rc::new(RefCell::new(None::<String>));
         let (menu_sender, menu_receiver) = async_channel::unbounded();
         background::listen(menu_receiver, {
             let menu = menu.clone();
             let shared = shared.clone();
             let id = item.id.clone();
-            let path = item.menu_path.clone().unwrap_or_default();
-            move |items| show_menu(&menu, &shared, &id, &path, items)
+            let menu_path = menu_path.clone();
+            move |items| {
+                // A reply can arrive after the item was removed.
+                if menu.parent().is_none() {
+                    return;
+                }
+                let path = menu_path.borrow().clone().unwrap_or_default();
+                show_menu(&menu, &shared, &id, &path, items);
+            }
         });
 
-        let id = item.id.clone();
-        let shared_click = shared.clone();
-        let item_is_menu = item.item_is_menu;
-        let menu_path = item.menu_path.clone();
+        let request_menu = {
+            let shared = shared.clone();
+            let id = item.id.clone();
+            let menu_path = menu_path.clone();
+            move || {
+                if let Some(path) = menu_path.borrow().as_deref() {
+                    watcher::request_menu(&shared, &id, path, menu_sender.clone());
+                }
+            }
+        };
         let click = gtk::GestureClick::new();
         click.set_button(0);
-        click.connect_released(move |gesture, _, x, y| match gesture.current_button() {
-            1 if item_is_menu => {
-                if let Some(path) = &menu_path {
-                    watcher::request_menu(&shared_click, &id, path, menu_sender.clone());
-                }
+        click.connect_released({
+            let shared = shared.clone();
+            let id = item.id.clone();
+            let item_is_menu = item_is_menu.clone();
+            move |gesture, _, x, y| match gesture.current_button() {
+                1 if item_is_menu.get() => request_menu(),
+                1 => watcher::call_item(&shared, &id, "Activate", pointer_position(gesture, x, y)),
+                2 => watcher::call_item(
+                    &shared,
+                    &id,
+                    "SecondaryActivate",
+                    pointer_position(gesture, x, y),
+                ),
+                3 => request_menu(),
+                _ => {}
             }
-            1 => watcher::call_item(
-                &shared_click,
-                &id,
-                "Activate",
-                pointer_position(gesture, x, y),
-            ),
-            2 => watcher::call_item(
-                &shared_click,
-                &id,
-                "SecondaryActivate",
-                pointer_position(gesture, x, y),
-            ),
-            3 => {
-                if let Some(path) = &menu_path {
-                    watcher::request_menu(&shared_click, &id, path, menu_sender.clone());
-                }
-            }
-            _ => {}
         });
         target.add_controller(click);
 
@@ -156,14 +174,38 @@ fn rebuild(
             gtk::glib::Propagation::Stop
         });
         target.add_controller(scroll);
-        tray.append(&target);
+
+        let entry = Self {
+            id: item.id.clone(),
+            target,
+            image,
+            menu,
+            item_is_menu,
+            menu_path,
+        };
+        entry.update(item);
+        entry
+    }
+
+    fn update(&self, item: &Item) {
+        self.target.set_tooltip_text(item.tooltip.as_deref());
+        set_icon(&self.image, item);
+        self.item_is_menu.set(item.item_is_menu);
+        self.menu_path.replace(item.menu_path.clone());
+    }
+
+    fn destroy(self, tray: &gtk::Box) {
+        // Popping down first keeps the open menu count balanced.
+        self.menu.popdown();
+        self.menu.unparent();
+        tray.remove(&self.target);
     }
 }
 
 fn show_menu(
     popover: &gtk::Popover,
     shared: &watcher::SharedConnection,
-    id: &super::model::ItemId,
+    id: &ItemId,
     path: &str,
     items: Vec<MenuItem>,
 ) {
@@ -178,7 +220,7 @@ fn show_menu(
 fn menu_content(
     items: Vec<MenuItem>,
     shared: &watcher::SharedConnection,
-    id: &super::model::ItemId,
+    id: &ItemId,
     path: &str,
     root: &gtk::Popover,
 ) -> gtk::Box {
@@ -198,7 +240,7 @@ fn menu_content(
 fn menu_button(
     item: MenuItem,
     shared: &watcher::SharedConnection,
-    id: &super::model::ItemId,
+    id: &ItemId,
     path: &str,
     root: &gtk::Popover,
 ) -> gtk::Button {
@@ -208,9 +250,13 @@ fn menu_button(
     let shared = shared.clone();
     let id = id.clone();
     let path = path.to_string();
-    let root = root.clone();
+    // The button lives inside the root popover; a strong reference would form
+    // a cycle that keeps the popover alive after its item is removed.
+    let root = root.downgrade();
     button.connect_clicked(move |_| {
-        root.popdown();
+        if let Some(root) = root.upgrade() {
+            root.popdown();
+        }
         watcher::call_menu_item(&shared, &id, &path, item.id);
     });
     button
@@ -219,7 +265,7 @@ fn menu_button(
 fn submenu_button(
     mut item: MenuItem,
     shared: &watcher::SharedConnection,
-    id: &super::model::ItemId,
+    id: &ItemId,
     path: &str,
     root: &gtk::Popover,
 ) -> gtk::MenuButton {
@@ -268,9 +314,7 @@ fn menu_row(item: &MenuItem, submenu: bool) -> gtk::Box {
     row
 }
 
-fn icon(item: &Item) -> gtk::Image {
-    let image = gtk::Image::new();
-    image.set_pixel_size(ICON_SIZE);
+fn set_icon(image: &gtk::Image, item: &Item) {
     if let Some(pixmap) = &item.pixmap {
         let pixmap = scale_pixmap(pixmap, ICON_SIZE);
         let texture = gtk::gdk::MemoryTexture::new(
@@ -286,7 +330,6 @@ fn icon(item: &Item) -> gtk::Image {
     } else {
         image.set_icon_name(Some("image-missing"));
     }
-    image
 }
 
 fn pointer_position(gesture: &gtk::GestureClick, fallback_x: f64, fallback_y: f64) -> (i32, i32) {

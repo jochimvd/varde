@@ -50,7 +50,9 @@ fn subscribe(refresh: Refresh) {
 }
 
 fn on_scroll(button: &gtk::Button, refresh: Refresh) {
-    let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::VERTICAL);
+    let scroll = gtk::EventControllerScroll::new(
+        gtk::EventControllerScrollFlags::VERTICAL | gtk::EventControllerScrollFlags::DISCRETE,
+    );
     scroll.connect_scroll(move |_, _, dy| {
         if dy < 0.0 {
             spawn_shell_then_refresh(

@@ -101,9 +101,11 @@ fn handle_command_line(
         command::Request::ClearNotifications => notifications.clear(),
         command::Request::Dmenu { prompt } => {
             notifications.close();
-            return match command::read_lines(command_line)
-                .and_then(|lines| launcher.run_dmenu(app, lines, &prompt))
-            {
+            let result = command_line
+                .stdin()
+                .ok_or_else(|| "selector input is unavailable".to_string())
+                .and_then(|input| launcher.run_dmenu(app, command::read_lines(input), &prompt));
+            return match result {
                 Ok(Some(selected)) => {
                     command_line.print_literal(&format!("{selected}\n"));
                     0.into()

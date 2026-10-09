@@ -1,6 +1,10 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, mpsc},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
     time::Instant,
 };
 
@@ -26,11 +30,15 @@ const MAX_ACTION_LABEL_BYTES: usize = 1024;
 pub(super) struct Control {
     commands: mpsc::Sender<Command>,
     store: Arc<Mutex<Store>>,
+    available: Arc<AtomicBool>,
 }
 
 impl Control {
     pub fn snapshot(&self) -> Snapshot {
-        model::from_state(&self.store.lock().expect("notification store poisoned"))
+        Snapshot {
+            available: self.available.load(Ordering::Relaxed),
+            ..model::from_state(&self.store.lock().expect("notification store poisoned"))
+        }
     }
 
     pub fn toggle_dnd(&self) {
@@ -74,6 +82,7 @@ enum Command {
 #[derive(Clone)]
 struct Shared {
     store: Arc<Mutex<Store>>,
+    available: Arc<AtomicBool>,
     changes: async_channel::Sender<()>,
     commands: mpsc::Sender<Command>,
     sounds: Option<Player>,
@@ -84,6 +93,11 @@ impl Shared {
         let _ = self.changes.try_send(());
     }
 
+    fn set_available(&self, available: bool) {
+        self.available.store(available, Ordering::Relaxed);
+        self.publish();
+    }
+
     fn wake(&self) {
         let _ = self.commands.send(Command::Wake);
     }
@@ -92,53 +106,102 @@ impl Shared {
 pub(super) fn start(changes: async_channel::Sender<()>) -> Option<Control> {
     let (commands, receiver) = mpsc::channel();
     let store = Arc::new(Mutex::new(Store::default()));
+    let available = Arc::new(AtomicBool::new(false));
     let control = Control {
         commands: commands.clone(),
         store: Arc::clone(&store),
+        available: Arc::clone(&available),
     };
     let shared = Shared {
         store,
+        available,
         changes,
         commands,
         sounds: Player::start(),
     };
-    crate::background::spawn("notification-daemon", move || {
-        if let Err(error) = run(shared, receiver) {
-            eprintln!("varde: notification daemon failed: {error}");
-        }
-    })
-    .then_some(control)
+    crate::background::spawn("notification-daemon", move || run(shared, receiver))
+        .then_some(control)
 }
 
-fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
+fn connect(shared: &Shared) -> zbus::Result<zbus::blocking::Connection> {
     let builder = match std::env::var("VARDE_NOTIFICATION_BUS_ADDRESS") {
         Ok(address) => zbus::blocking::connection::Builder::address(address.as_str())?,
         Err(_) => zbus::blocking::connection::Builder::session()?,
     };
+    // zbus allows replacement by default, which would let another daemon take
+    // the name without this one noticing; it can only be lost by disconnecting.
     let connection = builder
         .name(SERVICE)?
+        .allow_name_replacements(false)
         .serve_at(PATH, Notifications(shared.clone()))?
         .build()?;
-    shared.publish();
+    let watched = connection.clone();
+    let shared = shared.clone();
+    crate::background::spawn("notification-connection", move || {
+        watched.closed();
+        shared.wake();
+    });
+    Ok(connection)
+}
 
+/// Serves notifications while the bus name is owned and keeps retrying to
+/// acquire it otherwise, so another daemon or an exiting instance holding the
+/// name only delays notifications. The store survives reconnects.
+fn run(shared: Shared, commands: mpsc::Receiver<Command>) {
+    let mut connection = None;
+    let mut retry_at = Instant::now();
+    let mut last_error = None;
     loop {
-        let next = shared
+        if connection
+            .as_ref()
+            .is_some_and(zbus::blocking::Connection::is_closed)
+        {
+            connection = None;
+            retry_at = Instant::now() + crate::background::RETRY_DELAY;
+            shared.set_available(false);
+        }
+        if connection.is_none() && retry_at <= Instant::now() {
+            match connect(&shared) {
+                Ok(connected) => {
+                    connection = Some(connected);
+                    last_error = None;
+                    shared.set_available(true);
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    if last_error.as_ref() != Some(&error) {
+                        eprintln!("varde: notification daemon unavailable, retrying: {error}");
+                    }
+                    last_error = Some(error);
+                    retry_at = Instant::now() + crate::background::RETRY_DELAY;
+                }
+            }
+        }
+        let connection = connection.as_ref();
+
+        let popup_deadline = shared
             .store
             .lock()
             .expect("notification store poisoned")
             .next_popup_deadline();
+        let next = popup_deadline
+            .into_iter()
+            .chain(connection.is_none().then_some(retry_at))
+            .min();
         let command = match next {
             Some(deadline) => {
                 match commands.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
                     Ok(command) => command,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
-                        let closed = shared
-                            .store
-                            .lock()
-                            .expect("notification store poisoned")
-                            .hide_due_popups(Instant::now());
-                        emit_closed(&connection, &closed);
-                        shared.publish();
+                        if popup_deadline.is_some_and(|deadline| deadline <= Instant::now()) {
+                            let closed = shared
+                                .store
+                                .lock()
+                                .expect("notification store poisoned")
+                                .hide_due_popups(Instant::now());
+                            emit_closed(connection, &closed);
+                            shared.publish();
+                        }
                         continue;
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -153,7 +216,7 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
         match command {
             Command::Wake => continue,
             Command::EmitClosed(id, reason) => {
-                emit_closed(&connection, &[(id, reason)]);
+                emit_closed(connection, &[(id, reason)]);
             }
             Command::ToggleDnd => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
@@ -166,7 +229,7 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                     .lock()
                     .expect("notification store poisoned")
                     .clear();
-                emit_closed(&connection, &closed);
+                emit_closed(connection, &closed);
             }
             Command::Dismiss(id) => {
                 let closed = shared
@@ -176,7 +239,7 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                     .close(id)
                     .then_some(vec![(id, CloseReason::Dismissed)])
                     .unwrap_or_default();
-                emit_closed(&connection, &closed);
+                emit_closed(connection, &closed);
             }
             Command::DismissGroup(notifications) => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
@@ -187,17 +250,17 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
                     }
                 }
                 drop(store);
-                emit_closed(&connection, &closed);
+                emit_closed(connection, &closed);
             }
             Command::InvokeAction(id, key, activation_token) => {
                 let mut store = shared.store.lock().expect("notification store poisoned");
                 let (action_invoked, closed) = invoke_action(&mut store, id, &key);
                 drop(store);
                 if action_invoked {
-                    emit_action(&connection, id, &key, activation_token.as_deref());
+                    emit_action(connection, id, &key, activation_token.as_deref());
                 }
                 if closed {
-                    emit_closed(&connection, &[(id, CloseReason::Dismissed)]);
+                    emit_closed(connection, &[(id, CloseReason::Dismissed)]);
                 }
             }
             Command::Displayed(notifications) => {
@@ -211,7 +274,6 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) -> zbus::Result<()> {
         }
         shared.publish();
     }
-    Ok(())
 }
 
 fn invoke_action(store: &mut Store, id: u32, key: &str) -> (bool, bool) {
@@ -231,7 +293,10 @@ fn invoke_action(store: &mut Store, id: u32, key: &str) -> (bool, bool) {
     }
 }
 
-fn emit_closed(connection: &zbus::blocking::Connection, closed: &[(u32, CloseReason)]) {
+fn emit_closed(connection: Option<&zbus::blocking::Connection>, closed: &[(u32, CloseReason)]) {
+    let Some(connection) = connection else {
+        return;
+    };
     for (id, reason) in closed {
         let _ = connection.emit_signal(
             None::<&str>,
@@ -244,11 +309,14 @@ fn emit_closed(connection: &zbus::blocking::Connection, closed: &[(u32, CloseRea
 }
 
 fn emit_action(
-    connection: &zbus::blocking::Connection,
+    connection: Option<&zbus::blocking::Connection>,
     id: u32,
     action: &str,
     activation_token: Option<&str>,
 ) {
+    let Some(connection) = connection else {
+        return;
+    };
     if let Some(token) = activation_token.filter(|token| !token.is_empty()) {
         let _ = connection.emit_signal(
             None::<&str>,
