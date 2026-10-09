@@ -90,9 +90,9 @@ next 'Send resident notification with a default action'
 notify \
     'Protocol Tests' 0 'dialog-information' \
     '[RESIDENT ACTION] Left-click acts but does not consume' \
-    'resident=true and timeout=-1. The popup hides after five seconds. Left-click should emit the default action while leaving this present; right-click dismisses it.' \
+    'resident=true and timeout=0. The timeout is ignored and the popup hides after five seconds. Left-click should emit the default action while leaving this present; right-click dismisses it.' \
     "['default', 'Open']" \
-    "{'resident': <true>, 'urgency': <byte 1>}" -1
+    "{'resident': <true>, 'urgency': <byte 1>}" 0
 
 next 'Send expandable notification with long text and named actions'
 notify \
@@ -100,7 +100,7 @@ notify \
     '[EXPANDABLE ACTIONS] This deliberately long notification title should stay on one line until the chevron is pressed' \
     'The collapsed body is limited to three lines. Expanding the notification should reveal this complete message, wrap the full title, and show Reply, Mark read, and Mute as compact buttons along the bottom. The default action should remain attached to the notification surface.' \
     "['default', 'Open', 'reply', 'Reply', 'mark-read', 'Mark read', 'mute', 'Mute']" \
-    "{'resident': <true>, 'urgency': <byte 1>}" -1
+    "{'resident': <true>, 'urgency': <byte 1>}" 0
 
 next 'Send short notification with only a named action'
 notify \
@@ -108,15 +108,15 @@ notify \
     '[NAMED ACTION] Expansion reveals the action' \
     'This row has no default action.' \
     "['archive', 'Archive']" \
-    "{'resident': <false>, 'urgency': <byte 1>}" -1
+    "{'resident': <false>, 'urgency': <byte 1>}" 0
 
 next 'Send non-resident notification with a default action'
 notify \
     'Protocol Tests' 0 'utilities-terminal' \
     '[NORMAL ACTION] Left-click acts and consumes' \
-    'resident=false and timeout=-1. The popup hides after five seconds. Left-click should emit the default action and remove this; right-click dismisses without action.' \
+    'resident=false and timeout=0. The timeout is ignored and the popup hides after five seconds. Left-click should emit the default action and remove this; right-click dismisses without action.' \
     "['default', 'Open']" \
-    "{'resident': <false>, 'urgency': <byte 1>}" -1
+    "{'resident': <false>, 'urgency': <byte 1>}" 0
 
 next 'Send critical notification with no automatic popup timeout'
 notify \
@@ -128,8 +128,8 @@ notify \
 next 'Send normal notification with an explicit zero timeout'
 notify \
     'Protocol Tests' 0 'emblem-default' \
-    '[ZERO TIMEOUT] No automatic popup timeout' \
-    'urgency=normal and timeout=0. The popup should remain until consumed by opening the notification center or explicitly removed.' \
+    '[ZERO TIMEOUT] Application timeout ignored' \
+    'urgency=normal and timeout=0. The popup should hide after five seconds while the notification remains live in the center.' \
     '[]' "{'urgency': <byte 1>}" 0
 
 next 'Send notification with an application icon and raw image-data hint'
@@ -137,42 +137,42 @@ notify \
     'Teams for Linux' 0 'teams-for-linux' \
     '[IMAGE HINT] Picture plus application icon' \
     'image-data supplies the large picture while app_icon supplies the Teams application icon.' \
-    '[]' "{'image-data': <(2, 2, 8, true, 8, 4, [byte 255, 64, 64, 255, 64, 255, 64, 255, 64, 64, 255, 255, 255, 220, 64, 255])>, 'urgency': <byte 1>}" -1
+    '[]' "{'image-data': <(2, 2, 8, true, 8, 4, [byte 255, 64, 64, 255, 64, 255, 64, 255, 64, 64, 255, 255, 255, 220, 64, 255])>, 'urgency': <byte 1>}" 0
 
 next 'Send notification with a themed image-path icon'
 notify \
     'Protocol Tests' 0 'dialog-information' \
     '[THEMED IMAGE] Icon theme name in image-path' \
     'image-path=folder-download should resolve through the current GTK icon theme.' \
-    '[]' "{'image-path': <'folder-download'>, 'urgency': <byte 1>}" -1
+    '[]' "{'image-path': <'folder-download'>, 'urgency': <byte 1>}" 0
 
 next 'Send notification with a themed sound'
 notify \
     'Protocol Tests' 0 'audio-volume-high' \
     '[THEMED SOUND] message-new-instant' \
     'sound-name should play through canberra-gtk-play.' \
-    '[]' "{'sound-name': <'message-new-instant'>, 'urgency': <byte 1>}" -1
+    '[]' "{'sound-name': <'message-new-instant'>, 'urgency': <byte 1>}" 0
 
 next 'Send notification with a sound file'
 notify \
     'Protocol Tests' 0 'audio-volume-high' \
     '[FILE SOUND] dialog-information.oga' \
     'sound-file should play the specified absolute file.' \
-    '[]' "{'sound-file': <'/usr/share/sounds/freedesktop/stereo/dialog-information.oga'>, 'urgency': <byte 1>}" -1
+    '[]' "{'sound-file': <'/usr/share/sounds/freedesktop/stereo/dialog-information.oga'>, 'urgency': <byte 1>}" 0
 
 next 'Send notification with a suppressed sound'
 notify \
     'Protocol Tests' 0 'audio-volume-muted' \
     '[SUPPRESSED SOUND] Must remain silent' \
     'suppress-sound=true should override sound-name.' \
-    '[]' "{'sound-name': <'message-new-instant'>, 'suppress-sound': <true>, 'urgency': <byte 1>}" -1
+    '[]' "{'sound-name': <'message-new-instant'>, 'suppress-sound': <true>, 'urgency': <byte 1>}" 0
 
 next 'Send a notification with progress at 25 percent'
 notify \
     'Download Manager' 0 'folder-download' \
     '[PROGRESS 1/2] Download at 25%' \
     'value=25 renders a quarter-filled progress bar. The next step replaces this notification with value=75.' \
-    '[]' "{'value': <25>, 'urgency': <byte 0>}" -1
+    '[]' "{'value': <25>, 'urgency': <byte 0>}" 0
 progress_id=$last_id
 
 next 'Replace the progress notification with 75 percent'
@@ -180,20 +180,20 @@ notify \
     'Download Manager' "$progress_id" 'folder-download' \
     '[PROGRESS 2/2] Download at 75%' \
     'value=75 updates the same notification to a three-quarter-filled progress bar.' \
-    '[]' "{'value': <75>, 'urgency': <byte 0>}" -1
+    '[]' "{'value': <75>, 'urgency': <byte 0>}" 0
 
 next 'Send transient notification with a short timeout'
 notify \
     'Protocol Tests' 0 'document-new' \
     '[TRANSIENT] Must not remain in the notification center' \
-    'transient=true and timeout=2500. After 2.5 seconds the popup and notification should disappear completely.' \
+    'transient=true and timeout=2500. The timeout is ignored; after five seconds the popup and notification should disappear completely.' \
     '[]' "{'transient': <true>, 'urgency': <byte 1>}" 2500
 
 next 'Send actionable notification with a short popup timeout'
 notify \
     'Protocol Tests' 0 'mail-unread' \
     '[CENTER RETENTION] Popup hides; action remains live' \
-    'timeout=2500. After the popup hides at 2.5 seconds, open the notification center, expand this row, and invoke Archive.' \
+    'timeout=2500 is ignored. After five seconds, open the notification center, expand this row, and invoke Archive.' \
     "['archive', 'Archive']" "{'urgency': <byte 1>}" 2500
 
 next 'Send critical notification with an explicit timeout'
@@ -219,7 +219,7 @@ notify \
     'Protocol Tests' 0 'system-run' \
     '[REPLACES_ID 1/2] Initial content' \
     'The next test step sends updated content using this exact notification ID.' \
-    '[]' "{'urgency': <byte 1>}" -1
+    '[]' "{'urgency': <byte 1>}" 0
 replacement_id=$last_id
 
 next 'Replace the preceding notification by ID'
@@ -227,21 +227,21 @@ notify \
     'Protocol Tests' "$replacement_id" 'system-run' \
     '[REPLACES_ID 2/2] Updated in place' \
     'Same ID and a new revision. Expect one replacement popup and one updated notification-center row.' \
-    '[]' "{'urgency': <byte 1>}" -1
+    '[]' "{'urgency': <byte 1>}" 0
 
 next 'Send the initial stack-tag notification'
 notify \
     'Download Manager' 0 'folder-download' \
     '[STACK TAG 1/2] Download at 25%' \
     'The next test step uses the same application and x-dunst-stack-tag to update this in place.' \
-    '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" -1
+    '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" 0
 
 next 'Replace the preceding notification by stack tag'
 notify \
     'Download Manager' 0 'folder-download' \
     '[STACK TAG 2/2] Download complete' \
     'Same application and stack tag. Expect the 25% notification to be replaced in place.' \
-    '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" -1
+    '[]' "{'x-dunst-stack-tag': <'interactive-download-test'>, 'urgency': <byte 0>}" 0
 
 next 'Send ten notifications to test popup batching and center consumption'
 printf '\nExpected: QUEUE 01-05 appear first. Open the notification center before their five-second timers finish, then close it. QUEUE 06-10 should appear and receive fresh five-second timers.\n'
