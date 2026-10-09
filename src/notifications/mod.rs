@@ -52,7 +52,7 @@ impl Manager {
     pub fn button(self: &Rc<Self>) -> gtk::Button {
         if self.bell.borrow().is_none() {
             let bell = Bell::new(self);
-            bell.update(&self.snapshot.borrow());
+            bell.update(&self.snapshot.borrow(), self.center_open());
             self.bell.replace(Some(bell));
         }
         self.bell
@@ -74,6 +74,9 @@ impl Manager {
     }
 
     pub(super) fn center_closed(&self) {
+        if let Some(bell) = self.bell.borrow().as_ref() {
+            bell.update(&self.snapshot.borrow(), false);
+        }
         if let Some(popups) = self.popups.borrow().as_ref() {
             popups.update(&self.snapshot.borrow(), false);
         }
@@ -116,14 +119,12 @@ impl Manager {
     }
 
     pub fn toggle(self: &Rc<Self>) {
-        if self
-            .center
-            .borrow()
-            .as_ref()
-            .is_some_and(Center::is_visible)
-        {
+        if self.center_open() {
             self.close();
             return;
+        }
+        if let Some(bell) = self.bell.borrow().as_ref() {
+            bell.update(&self.snapshot.borrow(), true);
         }
         if self.center.borrow().is_none() {
             let anchor = self
@@ -147,20 +148,23 @@ impl Manager {
     }
 
     fn apply(&self, snapshot: Snapshot) {
+        let center_open = self.center_open();
         if let Some(bell) = self.bell.borrow().as_ref() {
-            bell.update(&snapshot);
+            bell.update(&snapshot, center_open);
         }
         if let Some(center) = self.center.borrow().as_ref() {
             center.update(&snapshot);
         }
         if let Some(popups) = self.popups.borrow().as_ref() {
-            let center_open = self
-                .center
-                .borrow()
-                .as_ref()
-                .is_some_and(Center::is_visible);
             popups.update(&snapshot, center_open);
         }
         self.snapshot.replace(snapshot);
+    }
+
+    fn center_open(&self) -> bool {
+        self.center
+            .borrow()
+            .as_ref()
+            .is_some_and(Center::is_visible)
     }
 }
