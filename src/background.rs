@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     io::{BufRead, BufReader, Read},
     os::unix::process::CommandExt,
     process::{Child, Command, Stdio},
@@ -8,6 +9,7 @@ use std::{
 };
 
 use async_channel::Receiver;
+use gtk::glib;
 
 /// How long anything in the shell waits before retrying a failed connection,
 /// command, or subscription.
@@ -31,6 +33,18 @@ pub fn spawn(name: &str, task: impl FnOnce() + Send + 'static) -> bool {
             false
         }
     }
+}
+
+/// Starts a process without waiting for it; `exited` runs on the main thread
+/// once it finishes.
+pub fn run(
+    arguments: &[&str],
+    exited: impl FnOnce(Result<(), glib::Error>) + 'static,
+) -> Result<(), glib::Error> {
+    let arguments = arguments.iter().map(OsStr::new).collect::<Vec<_>>();
+    let process = gio::Subprocess::newv(&arguments, gio::SubprocessFlags::NONE)?;
+    process.wait_check_async(None::<&gio::Cancellable>, exited);
+    Ok(())
 }
 
 /// Runs a long-lived command, calling `handle` for every line it prints and

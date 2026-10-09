@@ -1,6 +1,5 @@
 use std::{
     cell::Cell,
-    process::Command,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -154,18 +153,17 @@ where
 }
 
 pub(super) fn spawn_shell(command: &str) {
-    let command = command.to_string();
-    background::spawn("shell-command", move || {
-        let _ = Command::new("sh").args(["-c", &command]).status();
-    });
+    spawn_shell_then(command, || {});
 }
 
 pub(super) fn spawn_shell_then_refresh(command: &str, refresh: Refresh) {
-    let command = command.to_string();
-    background::spawn("shell-command", move || {
-        let _ = Command::new("sh").args(["-c", &command]).status();
-        refresh.request();
-    });
+    spawn_shell_then(command, move || refresh.request());
+}
+
+fn spawn_shell_then(command: &str, exited: impl FnOnce() + 'static) {
+    if let Err(error) = background::run(&["sh", "-c", command], |_| exited()) {
+        eprintln!("varde: could not run {command:?}: {error}");
+    }
 }
 
 pub(super) fn command(program: &str, args: &[&str]) -> Option<String> {
