@@ -49,8 +49,13 @@ impl Manager {
 
     fn toggle_source(self: &Rc<Self>, app: &gtk::Application, mode: Mode) {
         if self.dmenu.borrow().is_some() {
+            // While the selector input is still being read nothing is shown,
+            // so the request cancels the selector and opens as usual.
+            let showing = self.is_open();
             self.close();
-            return;
+            if showing {
+                return;
+            }
         }
         if self.active_mode() == Some(mode) {
             self.close();
@@ -68,27 +73,57 @@ impl Manager {
     pub fn run_dmenu(
         self: &Rc<Self>,
         app: &gtk::Application,
-        lines: Vec<String>,
+        lines: impl Future<Output = Result<Vec<String>, String>> + 'static,
         prompt: &str,
     ) -> Result<Option<String>, String> {
         if self.dmenu.borrow().is_some() {
             return Err("A selector is already active".into());
         }
-        if self.is_open() {
-            self.close();
-        }
+        self.close();
 
         let main_loop = glib::MainLoop::new(None, false);
-        let result = Rc::new(RefCell::new(None));
+        let result = Rc::new(RefCell::new(Ok(None)));
         self.dmenu.replace(Some(DmenuSession {
             main_loop: main_loop.clone(),
             result: Rc::clone(&result),
         }));
-        self.show(app, Mode::Dmenu, source::dmenu(lines), prompt, false, None);
+        let reader = glib::spawn_future_local({
+            let manager = self.clone();
+            let app = app.clone();
+            let prompt = prompt.to_owned();
+            let result = Rc::clone(&result);
+            async move {
+                let lines = lines.await;
+                // The session may have been closed earlier in the same main
+                // loop iteration that completed the read.
+                let current = manager
+                    .dmenu
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|session| Rc::ptr_eq(&session.result, &result));
+                if !current {
+                    return;
+                }
+                match lines {
+                    Ok(lines) => manager.show(
+                        &app,
+                        Mode::Dmenu,
+                        source::dmenu(lines),
+                        &prompt,
+                        false,
+                        None,
+                    ),
+                    Err(error) => {
+                        *result.borrow_mut() = Err(error);
+                        manager.close();
+                    }
+                }
+            }
+        });
         main_loop.run();
+        reader.abort();
         self.dmenu.take();
-        let selected = result.borrow().clone();
-        Ok(selected)
+        result.replace(Ok(None))
     }
 
     fn show(
@@ -239,7 +274,7 @@ impl Manager {
             Ok(Outcome::Done) => self.close(),
             Ok(Outcome::Return(value)) => {
                 if let Some(session) = self.dmenu.take() {
-                    session.result.replace(Some(value));
+                    *session.result.borrow_mut() = Ok(Some(value));
                     self.hide();
                     session.main_loop.quit();
                 }
@@ -255,5 +290,5 @@ impl Manager {
 
 struct DmenuSession {
     main_loop: glib::MainLoop,
-    result: Rc<RefCell<Option<String>>>,
+    result: Rc<RefCell<Result<Option<String>, String>>>,
 }
