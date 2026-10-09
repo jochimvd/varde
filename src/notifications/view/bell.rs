@@ -84,14 +84,18 @@ impl Bell {
         }
     }
 
-    pub fn update(&self, snapshot: &Snapshot) {
+    pub fn update(&self, snapshot: &Snapshot, center_open: bool) {
         let alt = snapshot.alt();
         self.state.set(BellState {
             dnd: snapshot.dnd,
             notified: snapshot.count > 0,
         });
         self.icon.queue_draw();
-        self.button.set_tooltip_text(Some(&snapshot.tooltip()));
+        // GTK chains a tooltip shown while the center opens under the center
+        // popover before it has mapped; that popup is never configured and the
+        // shell blocks waiting for it. The open center says the same anyway.
+        self.button
+            .set_tooltip_text((!center_open).then(|| snapshot.tooltip()).as_deref());
 
         let mut current = self.class.borrow_mut();
         if *current != alt {
