@@ -401,7 +401,7 @@ impl Watcher {
 
 #[interface(name = "org.kde.StatusNotifierWatcher")]
 impl Watcher {
-    fn register_status_notifier_item(
+    async fn register_status_notifier_item(
         &self,
         service: &str,
         #[zbus(header)] header: Header<'_>,
@@ -427,22 +427,22 @@ impl Watcher {
             return;
         }
 
-        let registration = item.registration();
-        let _ = zbus::block_on(Self::status_notifier_item_registered(
-            &emitter,
-            &registration,
-        ));
-        let _ = zbus::block_on(self.registered_status_notifier_items_changed(&emitter));
+        let _ = Self::status_notifier_item_registered(&emitter, &item.registration()).await;
+        let _ = self
+            .registered_status_notifier_items_changed(&emitter)
+            .await;
     }
 
-    fn register_status_notifier_host(
+    async fn register_status_notifier_host(
         &self,
         _service: &str,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
     ) {
         if self.register_host() {
-            let _ = zbus::block_on(Self::status_notifier_host_registered(&emitter));
-            let _ = zbus::block_on(self.is_status_notifier_host_registered_changed(&emitter));
+            let _ = Self::status_notifier_host_registered(&emitter).await;
+            let _ = self
+                .is_status_notifier_host_registered_changed(&emitter)
+                .await;
         }
     }
 
