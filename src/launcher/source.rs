@@ -177,14 +177,12 @@ impl Source for Apps {
 fn launch_app(id: &str) -> Result<Outcome, String> {
     gio::DesktopAppInfo::new(id)
         .ok_or_else(|| format!("Application is no longer available: {id}"))?;
-    let arguments = ["uwsm-app", "--", id].map(std::ffi::OsStr::new);
-    let process = gio::Subprocess::newv(&arguments, gio::SubprocessFlags::NONE)
-        .map_err(|error| error.to_string())?;
-    process.wait_check_async(None::<&gio::Cancellable>, |result| {
+    crate::background::run(&["uwsm-app", "--", id], |result| {
         if let Err(error) = result {
             eprintln!("varde: application launch failed: {error}");
         }
-    });
+    })
+    .map_err(|error| error.to_string())?;
     Ok(Outcome::Done)
 }
 

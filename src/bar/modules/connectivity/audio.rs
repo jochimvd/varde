@@ -4,9 +4,10 @@ use gtk::glib;
 use gtk::prelude::*;
 
 use super::command::{
-    Refresh, StateClass, command, module, on_click, spawn_shell, spawn_shell_then_refresh, watch,
+    Refresh, StateClass, command, module, on_click, spawn_shell_then_refresh, watch,
 };
 use crate::background;
+use crate::bar::modules::open_floating;
 
 const INTERVAL: Duration = Duration::from_secs(30);
 const DEVICE_NAME_LIMIT: usize = 16;
@@ -25,9 +26,7 @@ pub fn audio() -> gtk::Button {
     on_click(&button, {
         let refresh = refresh.clone();
         move |mouse_button| match mouse_button {
-            1 => spawn_shell(
-                "hyprctl dispatch 'hl.dsp.exec_cmd(\"pavucontrol -t 3\", { tag = \"+floating-window\" })'",
-            ),
+            1 => open_floating("pavucontrol -t 3"),
             2 => spawn_shell_then_refresh("dot-menu-audio-switcher --cycle", refresh.clone()),
             3 => spawn_shell_then_refresh(
                 "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",

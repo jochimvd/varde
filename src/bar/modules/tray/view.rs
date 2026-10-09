@@ -1,12 +1,15 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
+    sync::Arc,
 };
 
 use gtk::prelude::*;
 
 use super::{
-    model::{Event, ICON_SIZE, Item, ItemId, MenuItem, ToggleKind, scale_pixmap},
+    model::{
+        Event, ICON_SIZE, Item, ItemId, MenuItem, Pixmap, ToggleKind, scale_pixmap, select_pixmap,
+    },
     watcher,
 };
 use crate::background;
@@ -64,6 +67,7 @@ struct Entry {
     menu: gtk::Popover,
     item_is_menu: Rc<Cell<bool>>,
     menu_path: Rc<RefCell<Option<String>>>,
+    pixmaps: Rc<RefCell<Arc<[Pixmap]>>>,
 }
 
 impl Entry {
@@ -82,6 +86,11 @@ impl Entry {
         let image = gtk::Image::new();
         image.set_pixel_size(ICON_SIZE);
         target.append(&image);
+        let pixmaps = Rc::new(RefCell::new(Arc::clone(&item.pixmaps)));
+        image.connect_scale_factor_notify({
+            let pixmaps = Rc::clone(&pixmaps);
+            move |image| show_pixmap(image, &pixmaps.borrow())
+        });
 
         let menu = gtk::Popover::builder()
             .autohide(true)
@@ -182,6 +191,7 @@ impl Entry {
             menu,
             item_is_menu,
             menu_path,
+            pixmaps,
         };
         entry.update(item);
         entry
@@ -189,6 +199,7 @@ impl Entry {
 
     fn update(&self, item: &Item) {
         self.target.set_tooltip_text(item.tooltip.as_deref());
+        self.pixmaps.replace(Arc::clone(&item.pixmaps));
         set_icon(&self.image, item);
         self.item_is_menu.set(item.item_is_menu);
         self.menu_path.replace(item.menu_path.clone());
@@ -315,21 +326,31 @@ fn menu_row(item: &MenuItem, submenu: bool) -> gtk::Box {
 }
 
 fn set_icon(image: &gtk::Image, item: &Item) {
-    if let Some(pixmap) = &item.pixmap {
-        let pixmap = scale_pixmap(pixmap, ICON_SIZE);
-        let texture = gtk::gdk::MemoryTexture::new(
-            pixmap.width,
-            pixmap.height,
-            gtk::gdk::MemoryFormat::R8g8b8a8,
-            &gtk::glib::Bytes::from(&pixmap.rgba),
-            pixmap.width as usize * 4,
-        );
-        image.set_paintable(Some(&texture));
+    if !item.pixmaps.is_empty() {
+        show_pixmap(image, &item.pixmaps);
     } else if !item.icon_name.is_empty() {
         image.set_icon_name(Some(&item.icon_name));
     } else {
         image.set_icon_name(Some("image-missing"));
     }
+}
+
+/// Renders the pixmap at device pixels; the image still shows it at
+/// `ICON_SIZE` logical pixels.
+fn show_pixmap(image: &gtk::Image, pixmaps: &[Pixmap]) {
+    let size = ICON_SIZE * image.scale_factor();
+    let Some(pixmap) = select_pixmap(pixmaps, size) else {
+        return;
+    };
+    let pixmap = scale_pixmap(pixmap, size);
+    let texture = gtk::gdk::MemoryTexture::new(
+        pixmap.width,
+        pixmap.height,
+        gtk::gdk::MemoryFormat::R8g8b8a8,
+        &gtk::glib::Bytes::from(&pixmap.rgba),
+        pixmap.width as usize * 4,
+    );
+    image.set_paintable(Some(&texture));
 }
 
 fn pointer_position(gesture: &gtk::GestureClick, fallback_x: f64, fallback_y: f64) -> (i32, i32) {
