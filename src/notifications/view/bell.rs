@@ -104,7 +104,6 @@ impl Bell {
     }
 }
 
-#[allow(deprecated)]
 fn draw_icon(
     icon: &gtk::DrawingArea,
     context: &cairo::Context,
@@ -113,42 +112,42 @@ fn draw_icon(
     state: BellState,
 ) {
     let glyph = if state.dnd { "󰂛" } else { "󰂚" };
-    context.select_font_face(
-        "JetBrainsMono Nerd Font Propo",
-        cairo::FontSlant::Normal,
-        cairo::FontWeight::Normal,
-    );
-    context.set_font_size(14.0);
+    let layout = icon.create_pango_layout(Some(glyph));
+    let (ink, _) = layout.extents();
+    let baseline = layout.baseline();
+    let pixels = |units: i32| f64::from(units) / f64::from(gtk::pango::SCALE);
+    // Round the ink box out to whole pixels from the baseline, as hinted text
+    // extents do, before centering it.
+    let left = pixels(ink.x()).floor();
+    let right = pixels(ink.x() + ink.width()).ceil();
+    let top = pixels(ink.y() - baseline).floor();
+    let bottom = pixels(ink.y() + ink.height() - baseline).ceil();
+    let x = (f64::from(width) - (right - left)) / 2.0 - left;
+    let y = (f64::from(height) - (bottom - top)) / 2.0 - top - pixels(baseline);
 
-    let extents = context.text_extents(glyph).expect("bell glyph extents");
-    context.move_to(
-        (f64::from(width) - extents.width()) / 2.0 - extents.x_bearing(),
-        (f64::from(height) - extents.height()) / 2.0 - extents.y_bearing(),
-    );
-    let color = icon.style_context().color();
-    context.set_source_rgba(
-        f64::from(color.red()),
-        f64::from(color.green()),
-        f64::from(color.blue()),
-        f64::from(color.alpha()),
-    );
-    context.show_text(glyph).expect("draw bell glyph");
+    // A snapshot draws the layout in the widget's CSS font through Pango.
+    let snapshot = gtk::Snapshot::new();
+    snapshot.translate(&gtk::graphene::Point::new(x as f32, y as f32));
+    snapshot.append_layout(&layout, &icon.color());
+    if let Some(node) = snapshot.to_node() {
+        node.draw(context);
+    }
 
     if !state.notified {
         return;
     }
+    #[allow(deprecated)]
+    let Some(accent) = icon.style_context().lookup_color("accent_color") else {
+        return;
+    };
 
     let dot_x = f64::from(width) - DOT_RADIUS;
     let dot_y = DOT_TOP + DOT_RADIUS;
     context.set_operator(cairo::Operator::Clear);
     context.arc(dot_x, dot_y, DOT_RADIUS + DOT_GAP, 0.0, TAU);
-    context.fill().expect("cut notification gap");
+    let _ = context.fill();
 
     context.set_operator(cairo::Operator::Over);
-    let accent = icon
-        .style_context()
-        .lookup_color("accent_color")
-        .expect("accent color is defined");
     context.set_source_rgba(
         f64::from(accent.red()),
         f64::from(accent.green()),
@@ -156,5 +155,5 @@ fn draw_icon(
         f64::from(accent.alpha()),
     );
     context.arc(dot_x, dot_y, DOT_RADIUS, 0.0, TAU);
-    context.fill().expect("draw notification dot");
+    let _ = context.fill();
 }
