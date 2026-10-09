@@ -38,6 +38,7 @@ pub(super) struct Launcher {
     visible: RefCell<Vec<usize>>,
     alphabetical: bool,
     limit: Option<usize>,
+    matcher: nucleo_matcher::Matcher,
     generation: u64,
     loading: bool,
     load_error: Option<String>,
@@ -280,6 +281,7 @@ impl Launcher {
             visible: RefCell::new(Vec::new()),
             alphabetical: true,
             limit: None,
+            matcher: nucleo_matcher::Matcher::new(nucleo_matcher::Config::DEFAULT),
             generation: 0,
             loading: false,
             load_error: None,
@@ -465,7 +467,12 @@ impl Launcher {
             self.show_message(error, true);
             return;
         }
-        let mut visible = search::rank(&self.items.borrow(), query, self.alphabetical);
+        let mut visible = search::rank(
+            &self.items.borrow(),
+            query,
+            self.alphabetical,
+            &mut self.matcher,
+        );
         if let Some(limit) = self.limit {
             visible.truncate(limit);
         }
