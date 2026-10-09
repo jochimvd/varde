@@ -1,6 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     rc::Rc,
 };
 
@@ -21,6 +21,7 @@ const PREVIEW_AREA_HEIGHT: i32 = 300;
 const THUMBNAIL_WIDTH: i32 = 56;
 const THUMBNAIL_HEIGHT: i32 = 36;
 const POINTER_ACTIVATION_DISTANCE: f64 = 3.0;
+const CACHED_THUMBNAILS: usize = 256;
 
 pub(super) struct Launcher {
     window: gtk::ApplicationWindow,
@@ -43,6 +44,7 @@ pub(super) struct Launcher {
     activation_pending: Cell<bool>,
     events: async_channel::Sender<Event>,
     thumbnail_cache: RefCell<HashMap<String, Option<gdk::MemoryTexture>>>,
+    thumbnails: Rc<RefCell<ThumbnailCache>>,
     thumbnail_pending: RefCell<HashSet<String>>,
     thumbnail_targets: RefCell<HashMap<String, glib::WeakRef<gtk::Picture>>>,
     hover_selection: Rc<Cell<bool>>,
@@ -284,6 +286,7 @@ impl Launcher {
             activation_pending: Cell::new(false),
             events,
             thumbnail_cache: RefCell::new(HashMap::new()),
+            thumbnails: Rc::clone(&manager.thumbnails),
             thumbnail_pending: RefCell::new(HashSet::new()),
             thumbnail_targets: RefCell::new(HashMap::new()),
             hover_selection,
@@ -417,6 +420,7 @@ impl Launcher {
     fn set_items(&mut self, items: Result<Vec<Item>, String>) {
         match items {
             Ok(items) => {
+                self.restore_thumbnails(&items);
                 self.items.replace(items);
                 self.update();
             }
@@ -425,6 +429,19 @@ impl Launcher {
                 self.visible.borrow_mut().clear();
                 self.show_message(&error, true);
                 self.load_error = Some(error);
+            }
+        }
+    }
+
+    fn restore_thumbnails(&self, items: &[Item]) {
+        let thumbnails = self.thumbnails.borrow();
+        let mut cache = self.thumbnail_cache.borrow_mut();
+        for item in items
+            .iter()
+            .filter(|item| matches!(item.visual, Visual::Image))
+        {
+            if let Some(texture) = thumbnails.get(&item.id, &item.title) {
+                cache.insert(item.id.clone(), Some(texture.clone()));
             }
         }
     }
@@ -651,6 +668,17 @@ impl Launcher {
                 self.thumbnail_cache
                     .borrow_mut()
                     .insert(id.clone(), texture.clone());
+                let title = self
+                    .items
+                    .borrow()
+                    .iter()
+                    .find(|item| item.id == id)
+                    .map(|item| item.title.clone());
+                if let (Some(title), Some(texture)) = (title, &texture) {
+                    self.thumbnails
+                        .borrow_mut()
+                        .insert(id.clone(), title, texture.clone());
+                }
                 let target = self
                     .thumbnail_targets
                     .borrow()
@@ -698,6 +726,34 @@ impl Launcher {
             adjustment.set_value(top);
         } else if bottom > adjustment.value() + adjustment.page_size() {
             adjustment.set_value(bottom - adjustment.page_size());
+        }
+    }
+}
+
+/// Clipboard thumbnails outlive the launcher, since history ids are stable. The
+/// title is kept as well in case a wiped history reuses an id.
+#[derive(Default)]
+pub(super) struct ThumbnailCache {
+    textures: HashMap<String, (String, gdk::MemoryTexture)>,
+    order: VecDeque<String>,
+}
+
+impl ThumbnailCache {
+    fn get(&self, id: &str, title: &str) -> Option<&gdk::MemoryTexture> {
+        self.textures
+            .get(id)
+            .filter(|(cached, _)| cached == title)
+            .map(|(_, texture)| texture)
+    }
+
+    fn insert(&mut self, id: String, title: String, texture: gdk::MemoryTexture) {
+        if self.textures.insert(id.clone(), (title, texture)).is_none() {
+            self.order.push_back(id);
+        }
+        if self.order.len() > CACHED_THUMBNAILS
+            && let Some(oldest) = self.order.pop_front()
+        {
+            self.textures.remove(&oldest);
         }
     }
 }
@@ -790,6 +846,27 @@ mod tests {
         assert_eq!(visible_row_range(0.0, 0.0, 200), 0..10);
         assert_eq!(visible_row_range(88.0, 440.0, 200), 2..13);
         assert_eq!(visible_row_range(8_800.0, 440.0, 200), 200..200);
+    }
+
+    #[test]
+    fn thumbnail_cache_matches_titles_and_drops_the_oldest() {
+        let texture = image_texture(ImagePixels {
+            width: 1,
+            height: 1,
+            stride: 4,
+            rgba: vec![0; 4],
+        });
+        let mut cache = ThumbnailCache::default();
+        for id in 0..=CACHED_THUMBNAILS {
+            cache.insert(id.to_string(), "Image".into(), texture.clone());
+        }
+
+        assert!(cache.get("0", "Image").is_none());
+        assert!(cache.get("1", "Image").is_some());
+        assert!(cache.get("1", "Other image").is_none());
+        cache.insert("1".into(), "Other image".into(), texture);
+        assert!(cache.get("1", "Other image").is_some());
+        assert_eq!(cache.textures.len(), CACHED_THUMBNAILS);
     }
 
     #[test]
