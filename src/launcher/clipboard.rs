@@ -343,13 +343,28 @@ fn crop_thumbnail(
         .max(f64::from(target_height) / f64::from(pixbuf.height()));
     let width = (f64::from(pixbuf.width()) * scale).ceil() as i32;
     let height = (f64::from(pixbuf.height()) * scale).ceil() as i32;
-    let scaled = pixbuf.scale_simple(width, height, gdk_pixbuf::InterpType::Bilinear)?;
-    Some(scaled.new_subpixbuf(
-        (width - target_width) / 2,
-        (height - target_height) / 2,
+    let thumbnail = gdk_pixbuf::Pixbuf::new(
+        gdk_pixbuf::Colorspace::Rgb,
+        pixbuf.has_alpha(),
+        8,
         target_width,
         target_height,
-    ))
+    )?;
+    // Only the visible part is scaled, since a very thin image would otherwise
+    // be scaled up to an enormous size first.
+    pixbuf.scale(
+        &thumbnail,
+        0,
+        0,
+        target_width,
+        target_height,
+        -f64::from((width - target_width) / 2),
+        -f64::from((height - target_height) / 2),
+        f64::from(width) / f64::from(pixbuf.width()),
+        f64::from(height) / f64::from(pixbuf.height()),
+        gdk_pixbuf::InterpType::Bilinear,
+    );
+    Some(thumbnail)
 }
 
 fn fit_preview(
@@ -450,6 +465,43 @@ mod tests {
         let preview = fit_preview(&wide, 280, 280).unwrap();
         assert_eq!((thumbnail.width(), thumbnail.height()), (56, 36));
         assert_eq!((preview.width(), preview.height()), (280, 56));
+    }
+
+    #[test]
+    fn crops_thumbnails_like_scaling_the_whole_image() {
+        let source =
+            gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, false, 8, 97, 211).unwrap();
+        for y in 0..source.height() {
+            for x in 0..source.width() {
+                source.put_pixel(
+                    x as u32,
+                    y as u32,
+                    (x * 2) as u8,
+                    (y * 3) as u8,
+                    (x ^ y) as u8,
+                    0,
+                );
+            }
+        }
+        let scaled = source
+            .scale_simple(56, 122, gdk_pixbuf::InterpType::Bilinear)
+            .unwrap();
+        let expected = scaled.new_subpixbuf(0, 43, 56, 36).copy().unwrap();
+
+        let thumbnail = crop_thumbnail(&source, 56, 36).unwrap();
+
+        assert_eq!(
+            thumbnail.read_pixel_bytes().as_ref(),
+            expected.read_pixel_bytes().as_ref()
+        );
+    }
+
+    #[test]
+    fn crops_very_thin_images() {
+        let thin =
+            gdk_pixbuf::Pixbuf::new(gdk_pixbuf::Colorspace::Rgb, true, 8, 1, 10_000).unwrap();
+        let thumbnail = crop_thumbnail(&thin, 56, 36).unwrap();
+        assert_eq!((thumbnail.width(), thumbnail.height()), (56, 36));
     }
 
     #[test]
