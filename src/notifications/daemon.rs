@@ -10,7 +10,7 @@ use super::{
     image::{self, Thumbnail},
     model::{self, Snapshot},
     sound::{Player, Sound},
-    state::{Action, CloseReason, Incoming, Picture, Store, Urgency},
+    state::{Action, CloseReason, Expiry, Incoming, Picture, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -298,7 +298,7 @@ impl Notifications {
         body: &str,
         actions: Vec<String>,
         hints: HashMap<String, OwnedValue>,
-        _expire_timeout: i32,
+        expire_timeout: i32,
     ) -> u32 {
         let sound = sound_hint(&hints);
         let incoming = Incoming {
@@ -311,6 +311,7 @@ impl Notifications {
             body: truncate_utf8(body, MAX_BODY_BYTES),
             actions: notification_actions(&actions),
             urgency: urgency(&hints),
+            expiry: Expiry::from_millis(expire_timeout),
             desktop_entry: string_hint(&hints, "desktop-entry")
                 .map(|value| truncate_utf8(&value, MAX_TEXT_BYTES))
                 .unwrap_or_default(),

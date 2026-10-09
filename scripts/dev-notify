@@ -16,7 +16,7 @@ usage() {
     printf '  --actions LIST   GVariant string array of key/label pairs [default: []]\n'
     printf "  --hints DICT     GVariant a{sv} dictionary [default: {'urgency': <byte 1>}]\n"
     printf '  --replaces ID    Replace an unsigned notification ID [default: 0]\n'
-    printf '  --timeout MS     Signed application timeout in milliseconds [default: 0]\n'
+    printf '  --timeout MS     Signed application timeout in milliseconds [default: -1]\n'
     printf '  --close ID       Close one unsigned notification ID\n'
     printf '  --clear          Clear all notifications\n'
     printf '  -h, --help       Print help\n'
@@ -28,7 +28,7 @@ icon='dialog-information'
 actions='[]'
 hints="{'urgency': <byte 1>}"
 replaces=0
-timeout=0
+timeout=-1
 close=
 clear=false
 summary=
