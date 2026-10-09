@@ -22,8 +22,11 @@ const MAX_IMAGE_AREA: i64 = 7680 * 4320;
 /// before they are decoded.
 type ImageSizes = Arc<Mutex<HashMap<String, (i32, i32)>>>;
 
+/// Thumbnails have a worker of their own, so the selected item's preview never
+/// waits behind a page of thumbnail decodes.
 pub(super) struct Clipboard {
     previews: Sender<PreviewRequest>,
+    thumbnails: Sender<PreviewRequest>,
     commands: Sender<CommandRequest>,
     generation: Arc<AtomicU64>,
 }
@@ -59,20 +62,27 @@ enum CommandRequest {
 impl Clipboard {
     pub fn new() -> Self {
         let (previews, preview_receiver) = async_channel::unbounded();
+        let (thumbnails, thumbnail_receiver) = async_channel::unbounded();
         let (commands, command_receiver) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(0));
         let sizes = ImageSizes::default();
-        let worker_generation = Arc::clone(&generation);
-        let worker_sizes = Arc::clone(&sizes);
-        crate::background::spawn("clipboard-previews", move || {
-            preview_worker(preview_receiver, worker_generation, worker_sizes)
-        });
+        for (name, receiver) in [
+            ("clipboard-previews", preview_receiver),
+            ("clipboard-thumbnails", thumbnail_receiver),
+        ] {
+            let worker_generation = Arc::clone(&generation);
+            let worker_sizes = Arc::clone(&sizes);
+            crate::background::spawn(name, move || {
+                preview_worker(receiver, worker_generation, worker_sizes)
+            });
+        }
         let worker_generation = Arc::clone(&generation);
         crate::background::spawn("clipboard-commands", move || {
             command_worker(command_receiver, worker_generation, sizes)
         });
         Self {
             previews,
+            thumbnails,
             commands,
             generation,
         }
@@ -127,7 +137,11 @@ impl Source for Clipboard {
         generation: u64,
         result: Sender<Event>,
     ) -> bool {
-        self.previews
+        let worker = match kind {
+            ImageKind::Thumbnail => &self.thumbnails,
+            ImageKind::Preview => &self.previews,
+        };
+        worker
             .try_send(PreviewRequest::Image {
                 generation,
                 id: id.to_string(),
@@ -574,10 +588,12 @@ mod tests {
     #[test]
     fn dropping_clipboard_advances_generation() {
         let (previews, _) = async_channel::unbounded();
+        let (thumbnails, _) = async_channel::unbounded();
         let (commands, _) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(7));
         let clipboard = Clipboard {
             previews,
+            thumbnails,
             commands,
             generation: Arc::clone(&generation),
         };
@@ -590,17 +606,24 @@ mod tests {
     #[test]
     fn reports_unavailable_preview_worker() {
         let (previews, preview_receiver) = async_channel::unbounded();
+        let (thumbnails, thumbnail_receiver) = async_channel::unbounded();
         let (commands, _command_receiver) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(7));
         let clipboard = Clipboard {
             previews,
+            thumbnails,
             commands,
             generation,
         };
-        drop(preview_receiver);
+        drop(thumbnail_receiver);
 
         let (image_result, _) = async_channel::unbounded();
         assert!(!clipboard.request_image("42", ImageKind::Thumbnail, 56, 36, 7, image_result,));
+        let (image_result, _) = async_channel::unbounded();
+        assert!(clipboard.request_image("42", ImageKind::Preview, 300, 300, 7, image_result));
+        drop(preview_receiver);
+        let (image_result, _) = async_channel::unbounded();
+        assert!(!clipboard.request_image("42", ImageKind::Preview, 300, 300, 7, image_result));
         let (text_result, _) = async_channel::unbounded();
         assert!(!clipboard.request_text("42", 7, text_result));
     }
