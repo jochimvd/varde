@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use gio::prelude::*;
 
 pub const HELP: &str = "\
@@ -128,15 +126,18 @@ fn parse_dmenu(options: &[String]) -> Result<Request, String> {
     Ok(Request::Dmenu { prompt })
 }
 
-pub fn read_lines(command_line: &gio::ApplicationCommandLine) -> Result<Vec<String>, String> {
-    let input = command_line
-        .stdin()
-        .ok_or_else(|| "selector input is unavailable".to_string())?;
+pub async fn read_lines(input: gio::InputStream) -> Result<Vec<String>, String> {
     let mut bytes = Vec::new();
-    input
-        .into_read()
-        .read_to_end(&mut bytes)
-        .map_err(|error| format!("could not read selector input: {error}"))?;
+    loop {
+        let chunk = input
+            .read_bytes_future(64 * 1024, gtk::glib::Priority::DEFAULT)
+            .await
+            .map_err(|error| format!("could not read selector input: {error}"))?;
+        if chunk.is_empty() {
+            break;
+        }
+        bytes.extend_from_slice(&chunk);
+    }
     parse_lines(bytes)
 }
 
