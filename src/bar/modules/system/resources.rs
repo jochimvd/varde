@@ -3,7 +3,7 @@ use std::{cell::Cell, fs, rc::Rc};
 use gtk::{glib, prelude::*};
 
 use super::set_critical;
-use crate::background;
+use crate::bar::modules::open_floating;
 
 const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
@@ -82,14 +82,7 @@ fn launch_btop_on_click(label: &gtk::Label) {
     label.set_cursor_from_name(Some("pointer"));
     let click = gtk::GestureClick::new();
     click.connect_released(|_, _, _, _| {
-        let _ = background::run(
-            &[
-                "hyprctl",
-                "dispatch",
-                r#"hl.dsp.exec_cmd("$TERMINAL -e btop", { tag = "+floating-window" })"#,
-            ],
-            |_| {},
-        );
+        open_floating("$TERMINAL -e btop");
     });
     label.add_controller(click);
 }

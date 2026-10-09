@@ -152,16 +152,8 @@ where
     refresh
 }
 
-pub(super) fn spawn_shell(command: &str) {
-    spawn_shell_then(command, || {});
-}
-
 pub(super) fn spawn_shell_then_refresh(command: &str, refresh: Refresh) {
-    spawn_shell_then(command, move || refresh.request());
-}
-
-fn spawn_shell_then(command: &str, exited: impl FnOnce() + 'static) {
-    if let Err(error) = background::run(&["sh", "-c", command], |_| exited()) {
+    if let Err(error) = background::run(&["sh", "-c", command], move |_| refresh.request()) {
         eprintln!("varde: could not run {command:?}: {error}");
     }
 }
