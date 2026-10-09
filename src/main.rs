@@ -40,7 +40,7 @@ fn main() -> glib::ExitCode {
     app.connect_startup({
         let notifications = notifications.clone();
         move |app| {
-            load_styles(app);
+            load_styles();
             if let Some(settings) = gtk::Settings::default() {
                 settings.set_gtk_cursor_blink(true);
                 settings.set_gtk_cursor_blink_time(1_000);
@@ -123,7 +123,7 @@ fn handle_command_line(
     0.into()
 }
 
-fn load_styles(_: &gtk::Application) {
+fn load_styles() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(include_str!("style.css"));
 
