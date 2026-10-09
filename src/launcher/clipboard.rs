@@ -1,8 +1,9 @@
 use std::{
+    collections::HashMap,
     io::{Cursor, Write},
     process::{Command, Stdio},
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -14,6 +15,12 @@ use super::source::{
 use async_channel::{Receiver, Sender};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_IMAGE_AREA: i64 = 7680 * 4320;
+
+/// Image sizes from the history listing, so oversized images are skipped
+/// before they are decoded.
+type ImageSizes = Arc<Mutex<HashMap<String, (i32, i32)>>>;
 
 pub(super) struct Clipboard {
     previews: Sender<PreviewRequest>,
@@ -54,13 +61,15 @@ impl Clipboard {
         let (previews, preview_receiver) = async_channel::unbounded();
         let (commands, command_receiver) = async_channel::unbounded();
         let generation = Arc::new(AtomicU64::new(0));
+        let sizes = ImageSizes::default();
         let worker_generation = Arc::clone(&generation);
+        let worker_sizes = Arc::clone(&sizes);
         crate::background::spawn("clipboard-previews", move || {
-            preview_worker(preview_receiver, worker_generation)
+            preview_worker(preview_receiver, worker_generation, worker_sizes)
         });
         let worker_generation = Arc::clone(&generation);
         crate::background::spawn("clipboard-commands", move || {
-            command_worker(command_receiver, worker_generation)
+            command_worker(command_receiver, worker_generation, sizes)
         });
         Self {
             previews,
@@ -168,10 +177,11 @@ fn parse_line(line: &[u8]) -> Option<LoadedItem> {
     };
 
     if let Some(dimensions) = image_dimensions(preview) {
+        let (width, height) = parse_dimensions(dimensions)?;
         return Some(LoadedItem {
             id: id.to_string(),
             title: format!("Image · {}", dimensions.replace('x', "×")),
-            visual: LoadedVisual::Image,
+            visual: LoadedVisual::Image { width, height },
             search_terms: vec!["image".into(), preview.into()],
         });
     }
@@ -217,7 +227,11 @@ fn parse_dimensions(value: &str) -> Option<(i32, i32)> {
     (width > 0 && height > 0).then_some((width, height))
 }
 
-fn preview_worker(receiver: Receiver<PreviewRequest>, generation: Arc<AtomicU64>) {
+fn preview_worker(
+    receiver: Receiver<PreviewRequest>,
+    generation: Arc<AtomicU64>,
+    sizes: ImageSizes,
+) {
     while let Ok(request) = receiver.recv_blocking() {
         let request_generation = match &request {
             PreviewRequest::Image { generation, .. } | PreviewRequest::Text { generation, .. } => {
@@ -236,7 +250,8 @@ fn preview_worker(receiver: Receiver<PreviewRequest>, generation: Arc<AtomicU64>
                 height,
                 result,
             } => {
-                let pixels = decode_image(&id, kind, width, height);
+                let size = sizes.lock().unwrap().get(&id).copied();
+                let pixels = decode_image(&id, size, kind, width, height);
                 if generation.load(Ordering::Acquire) == request_generation {
                     let _ = result.send_blocking(Event::Image {
                         generation: request_generation,
@@ -264,7 +279,11 @@ fn preview_worker(receiver: Receiver<PreviewRequest>, generation: Arc<AtomicU64>
     }
 }
 
-fn command_worker(receiver: Receiver<CommandRequest>, generation: Arc<AtomicU64>) {
+fn command_worker(
+    receiver: Receiver<CommandRequest>,
+    generation: Arc<AtomicU64>,
+    sizes: ImageSizes,
+) {
     while let Ok(request) = receiver.recv_blocking() {
         let request_generation = match &request {
             CommandRequest::Items { generation, .. }
@@ -279,6 +298,9 @@ fn command_worker(receiver: Receiver<CommandRequest>, generation: Arc<AtomicU64>
                 result,
             } => {
                 let items = load_items();
+                if let Ok(items) = &items {
+                    *sizes.lock().unwrap() = image_sizes(items);
+                }
                 if generation.load(Ordering::Acquire) == request_generation {
                     let _ = result.send_blocking(Event::Items {
                         generation: request_generation,
@@ -309,13 +331,35 @@ fn load_items() -> Result<Vec<LoadedItem>, String> {
     parse_list(&output)
 }
 
+fn image_sizes(items: &[LoadedItem]) -> HashMap<String, (i32, i32)> {
+    items
+        .iter()
+        .filter_map(|item| match item.visual {
+            LoadedVisual::Image { width, height } => Some((item.id.clone(), (width, height))),
+            _ => None,
+        })
+        .collect()
+}
+
 fn decode_text(id: &str) -> Option<String> {
     let bytes = crate::background::command_output("cliphist", &["decode", id], COMMAND_TIMEOUT)?;
     String::from_utf8(bytes).ok()
 }
 
-fn decode_image(id: &str, kind: ImageKind, width: i32, height: i32) -> Option<ImagePixels> {
+fn decode_image(
+    id: &str,
+    size: Option<(i32, i32)>,
+    kind: ImageKind,
+    width: i32,
+    height: i32,
+) -> Option<ImagePixels> {
+    if !size.is_some_and(within_limits) {
+        return None;
+    }
     let bytes = crate::background::command_output("cliphist", &["decode", id], COMMAND_TIMEOUT)?;
+    if bytes.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
     let pixbuf = gdk_pixbuf::Pixbuf::from_read(Cursor::new(bytes)).ok()?;
     let image = match kind {
         ImageKind::Thumbnail => crop_thumbnail(&pixbuf, width, height)?,
@@ -332,6 +376,10 @@ fn decode_image(id: &str, kind: ImageKind, width: i32, height: i32) -> Option<Im
         stride: rgba.rowstride() as usize,
         rgba: rgba.read_pixel_bytes().as_ref().to_vec(),
     })
+}
+
+fn within_limits((width, height): (i32, i32)) -> bool {
+    i64::from(width) * i64::from(height) <= MAX_IMAGE_AREA
 }
 
 fn crop_thumbnail(
@@ -429,7 +477,17 @@ mod tests {
             ["42", "41", "40"]
         );
         assert_eq!(items[1].title, "Image · 474×598");
-        assert!(matches!(items[1].visual, LoadedVisual::Image));
+        assert!(matches!(
+            items[1].visual,
+            LoadedVisual::Image {
+                width: 474,
+                height: 598
+            }
+        ));
+        assert_eq!(
+            image_sizes(&items),
+            HashMap::from([("41".to_string(), (474, 598))])
+        );
     }
 
     #[test]
@@ -455,6 +513,15 @@ mod tests {
         assert_eq!(parse_dimensions(dimensions), Some((1920, 1080)));
         assert!(image_dimensions("[[ binary data 2 MiB JPEG 1920x1080 ]]").is_some());
         assert!(image_dimensions("[[ binary data 2 KiB pdf ]]").is_none());
+    }
+
+    #[test]
+    fn limits_decoded_image_area() {
+        assert!(within_limits((7680, 4320)));
+        assert!(within_limits((1, 33_177_600)));
+        assert!(!within_limits((7681, 4320)));
+        assert!(!within_limits((i32::MAX, i32::MAX)));
+        assert!(decode_image("42", None, ImageKind::Thumbnail, 56, 36).is_none());
     }
 
     #[test]
