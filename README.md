@@ -90,6 +90,15 @@ printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."
 
 See `varde --help` for the complete CLI.
 
+## Submap hints
+
+The bar shows the active Hyprland submap, then its available keys after a short
+delay. Give related bindings the same short `description` to display them as
+one action: HJKL and arrow bindings labeled `Move` become `hjkl/←↓↑→ Move`.
+Modifiers remain separate, and bindings without descriptions stay individual.
+Use `Exit` or `Cancel` for escape bindings to keep them visible when space is
+limited. Overflow is shown as `+N more`; hover for the full grouped list.
+
 ## Launcher actions
 
 Type `>` in the application launcher or run `varde actions` to open the action
