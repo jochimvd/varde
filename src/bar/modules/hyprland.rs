@@ -1,12 +1,14 @@
 use std::{
+    cell::{Cell, RefCell},
     env,
     io::{self, BufRead, BufReader, Read, Write},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
+    rc::Rc,
     time::{Duration, Instant},
 };
 
-use gtk::prelude::*;
+use gtk::{glib, prelude::*};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
@@ -15,6 +17,15 @@ use crate::background;
 const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
 const SUBMAP_PREFIX: &str = "󰌌 ";
+const SUBMAP_KEYS_DELAY: Duration = Duration::from_millis(300);
+const MODIFIERS: [(u32, &str); 6] = [
+    (64, "Super"),
+    (4, "Ctrl"),
+    (8, "Alt"),
+    (1, "Shift"),
+    (32, "MOD3"),
+    (128, "MOD5"),
+];
 
 pub fn widget() -> gtk::Box {
     let root = gtk::Box::builder()
@@ -29,18 +40,35 @@ pub fn widget() -> gtk::Box {
         .build();
     workspaces.add_css_class("workspaces");
 
-    let window = gtk::Label::new(None);
-    window.add_css_class("window");
-    window.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    window.set_hexpand(true);
-    window.set_margin_end(crate::bar::MODULE_GAP);
-    window.set_valign(gtk::Align::Center);
-    window.set_max_width_chars(1);
-    window.set_single_line_mode(true);
-    window.set_xalign(0.0);
+    let label = gtk::Label::new(None);
+    label.add_css_class("window");
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_hexpand(true);
+    label.set_margin_end(crate::bar::MODULE_GAP);
+    label.set_valign(gtk::Align::Center);
+    label.set_max_width_chars(1);
+    label.set_single_line_mode(true);
+    label.set_xalign(0.0);
 
     root.append(&workspaces);
-    root.append(&window);
+    root.append(&label);
+    let tooltip_grid: Rc<RefCell<Option<gtk::Grid>>> = Rc::default();
+    let tooltip_content = tooltip_grid.clone();
+    label.connect_query_tooltip(move |_, _, _, _, tooltip| {
+        let content = tooltip_content.borrow();
+        if let Some(grid) = content.as_ref() {
+            tooltip.set_custom(Some(grid));
+            true
+        } else {
+            false
+        }
+    });
+    let window = WindowTitle {
+        label,
+        generation: Rc::default(),
+        fit_handler: Rc::default(),
+        tooltip_grid,
+    };
 
     let (updates_tx, updates_rx) = async_channel::unbounded();
     background::spawn("hyprland-events", move || run_worker(updates_tx));
@@ -57,12 +85,12 @@ pub fn widget() -> gtk::Box {
         Update::Title(title) => {
             state.title = title;
             if state.submap.is_none() {
-                window.set_label(&state.title);
+                window.label.set_text(&state.title);
             }
         }
         Update::Submap(submap) => {
             state.submap = submap;
-            update_window_title(&window, &state);
+            window.show(&state);
         }
     });
 
@@ -74,7 +102,19 @@ struct State {
     workspaces: Vec<Workspace>,
     active_id: Option<i64>,
     title: String,
-    submap: Option<String>,
+    submap: Option<Submap>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Submap {
+    name: String,
+    keys: Vec<SubmapKey>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SubmapKey {
+    key: String,
+    description: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,7 +128,97 @@ enum Update {
     State(State),
     ActiveWorkspace(i64),
     Title(String),
-    Submap(Option<String>),
+    Submap(Option<Submap>),
+}
+
+struct WindowTitle {
+    label: gtk::Label,
+    /// Bumped on every change so a pending switch to the submap keys only
+    /// applies to the submap it was scheduled for.
+    generation: Rc<Cell<u64>>,
+    fit_handler: Rc<RefCell<Option<(gtk::gdk::FrameClock, glib::SignalHandlerId)>>>,
+    tooltip_grid: Rc<RefCell<Option<gtk::Grid>>>,
+}
+
+impl WindowTitle {
+    fn show(&self, state: &State) {
+        let generation = self.generation.get().wrapping_add(1);
+        self.generation.set(generation);
+        if let Some((clock, handler)) = self.fit_handler.borrow_mut().take() {
+            clock.disconnect(handler);
+        }
+
+        self.label.set_has_tooltip(false);
+        self.tooltip_grid.borrow_mut().take();
+        let Some(submap) = &state.submap else {
+            self.label.set_text(&state.title);
+            self.label.remove_css_class("submap");
+            return;
+        };
+        self.label
+            .set_text(&format!("{SUBMAP_PREFIX}{}", submap.name));
+        self.label.add_css_class("submap");
+        if submap.keys.is_empty() {
+            return;
+        }
+
+        let label = self.label.clone();
+        let current = self.generation.clone();
+        let fit_handler = self.fit_handler.clone();
+        let submap = submap.clone();
+        *self.tooltip_grid.borrow_mut() = Some(submap_tooltip(&submap));
+        self.label.set_has_tooltip(true);
+        glib::timeout_add_local_once(SUBMAP_KEYS_DELAY, move || {
+            if current.get() != generation {
+                return;
+            }
+            label.set_markup(&submap_keys_markup(&submap.name, &submap.keys));
+            let Some(clock) = label.frame_clock() else {
+                return;
+            };
+            let weak_label = label.downgrade();
+            let width = Cell::new(-1);
+            let handler = clock.connect_after_paint(move |_| {
+                let Some(label) = weak_label.upgrade() else {
+                    return;
+                };
+                let available = label.layout().width() / gtk::pango::SCALE;
+                if available > 0 && available != width.get() {
+                    width.set(available);
+                    let layout = label.create_pango_layout(None);
+                    let markup = fit_submap_markup(&submap, |markup| {
+                        layout.set_markup(markup);
+                        layout.pixel_size().0 <= available
+                    });
+                    label.set_markup(&markup);
+                }
+            });
+            *fit_handler.borrow_mut() = Some((clock, handler));
+        });
+    }
+}
+
+fn submap_tooltip(submap: &Submap) -> gtk::Grid {
+    let grid = gtk::Grid::builder()
+        .column_spacing(18)
+        .row_spacing(4)
+        .build();
+    let heading = gtk::Label::new(None);
+    heading.set_xalign(0.0);
+    heading.set_markup(&format!(
+        "<b>{}</b>",
+        glib::markup_escape_text(&submap.name)
+    ));
+    grid.attach(&heading, 0, 0, 2, 1);
+    for (row, hint) in submap.keys.iter().enumerate() {
+        let key = gtk::Label::new(Some(&hint.key));
+        key.set_xalign(0.0);
+        let description = gtk::Label::new(Some(&hint.description));
+        description.set_xalign(0.0);
+        grid.attach(&key, 0, row as i32 + 1, 1, 1);
+        grid.attach(&description, 1, row as i32 + 1, 1, 1);
+    }
+    grid
 }
 
 #[derive(Default)]
@@ -154,6 +284,20 @@ struct ActiveWindow {
     title: String,
 }
 
+#[derive(Deserialize)]
+struct Bind {
+    submap: String,
+    key: String,
+    modmask: u32,
+    description: String,
+    catch_all: bool,
+    mouse: bool,
+    #[serde(default)]
+    release: bool,
+    #[serde(default, rename = "longPress")]
+    long_press: bool,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 enum Event {
     Refresh,
@@ -169,7 +313,7 @@ enum WorkspaceSelector {
     Name(String),
 }
 
-fn render(workspaces: &gtk::Box, window: &gtk::Label, current: &State, next: &State) {
+fn render(workspaces: &gtk::Box, window: &WindowTitle, current: &State, next: &State) {
     if workspace_structure_changed(current, next) {
         rebuild_workspaces(workspaces, next);
     } else if current.active_id != next.active_id || current.workspaces != next.workspaces {
@@ -177,18 +321,46 @@ fn render(workspaces: &gtk::Box, window: &gtk::Label, current: &State, next: &St
     }
 
     if current.submap != next.submap || next.submap.is_none() && current.title != next.title {
-        update_window_title(window, next);
+        window.show(next);
     }
 }
 
-fn update_window_title(window: &gtk::Label, state: &State) {
-    if let Some(submap) = &state.submap {
-        window.set_label(&format!("{SUBMAP_PREFIX}{submap}"));
-        window.add_css_class("submap");
-    } else {
-        window.set_label(&state.title);
-        window.remove_css_class("submap");
+fn submap_keys_markup(name: &str, keys: &[SubmapKey]) -> String {
+    let mut parts = vec![format!("{SUBMAP_PREFIX}{}", glib::markup_escape_text(name))];
+    parts.extend(keys.iter().map(|key| {
+        let name = glib::markup_escape_text(&key.key);
+        if key.description.is_empty() {
+            format!("<b>{name}</b>")
+        } else {
+            format!(
+                "<b>{name}</b> {}",
+                glib::markup_escape_text(&key.description)
+            )
+        }
+    }));
+    parts.join(" · ")
+}
+
+fn fit_submap_markup(submap: &Submap, fits: impl Fn(&str) -> bool) -> String {
+    let (exits, actions): (Vec<_>, Vec<_>) = submap.keys.iter().cloned().partition(|key| {
+        key.description.eq_ignore_ascii_case("exit")
+            || key.description.eq_ignore_ascii_case("cancel")
+    });
+    for count in (0..=actions.len()).rev() {
+        let mut shown = actions[..count].to_vec();
+        if count < actions.len() {
+            shown.push(SubmapKey {
+                key: format!("+{}", actions.len() - count),
+                description: "more".into(),
+            });
+        }
+        shown.extend(exits.iter().cloned());
+        let markup = submap_keys_markup(&submap.name, &shown);
+        if fits(&markup) || count == 0 {
+            return markup;
+        }
     }
+    unreachable!()
 }
 
 fn rebuild_workspaces(workspaces: &gtk::Box, state: &State) {
@@ -302,7 +474,10 @@ fn run_worker(updates: async_channel::Sender<Update>) {
                         {
                             title_updates.queue(title.clone());
                             send_ready_title(&updates, &mut title_updates);
-                        } else if let Event::Submap(submap) = event {
+                        } else if let Event::Submap(name) = event {
+                            let submap = socket_paths().ok().and_then(|(request_socket, _)| {
+                                query_submap(&request_socket, name)
+                            });
                             let _ = updates.send_blocking(Update::Submap(submap));
                         }
                         line.clear();
@@ -331,7 +506,7 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
     let active_workspace: ActiveWorkspace = request_json(&request_socket, "j/activeworkspace")?;
     let active_window: ActiveWindow = request_json(&request_socket, "j/activewindow")?;
     let submap = request(&request_socket, "repl ':' .. hl.get_current_submap()")?;
-    let submap = parse_submap_query(&submap)?;
+    let submap = query_submap(&request_socket, parse_submap_query(&submap)?);
     let mut shown: Vec<_> = workspaces
         .iter_mut()
         .filter(|workspace| is_shown(workspace, &active_workspace))
@@ -348,6 +523,101 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
 
     let _ = updates.send_blocking(Update::State(state));
     Ok(active_address)
+}
+
+/// Looks up the keys bound in the named submap; if Hyprland cannot list them
+/// the submap is still shown, just without its keys.
+fn query_submap(socket: &Path, name: Option<String>) -> Option<Submap> {
+    let name = name?;
+    let binds: Vec<Bind> = request_json(socket, "j/binds").unwrap_or_default();
+    let keys = submap_keys(&binds, &name);
+    Some(Submap { name, keys })
+}
+
+fn submap_keys(binds: &[Bind], submap: &str) -> Vec<SubmapKey> {
+    let mut groups: Vec<(&Bind, Vec<String>)> = Vec::new();
+    for bind in binds.iter().filter(|bind| {
+        bind.submap == submap && !bind.catch_all && !bind.mouse && !bind.key.is_empty()
+    }) {
+        let key = bind.key.to_ascii_uppercase();
+        let existing = groups.iter_mut().find(|(first, _)| {
+            !bind.description.is_empty()
+                && first.description == bind.description
+                && first.modmask == bind.modmask
+                && first.release == bind.release
+                && first.long_press == bind.long_press
+        });
+        if let Some((_, keys)) = existing {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        } else {
+            groups.push((bind, vec![key]));
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(bind, keys)| SubmapKey {
+            key: key_name(bind.modmask, &key_set_name(&keys)),
+            description: bind.description.clone(),
+        })
+        .collect()
+}
+
+fn key_set_name(keys: &[String]) -> String {
+    let mut remaining = keys.to_vec();
+    let mut names = Vec::new();
+    for (set, label) in [
+        (["H", "J", "K", "L"].as_slice(), "hjkl"),
+        (["LEFT", "DOWN", "UP", "RIGHT"].as_slice(), "←↓↑→"),
+    ] {
+        if set
+            .iter()
+            .all(|key| remaining.iter().any(|item| item == key))
+        {
+            remaining.retain(|key| !set.contains(&key.as_str()));
+            names.push(label.to_owned());
+        }
+    }
+    let mut digits: Vec<_> = remaining
+        .iter()
+        .filter_map(|key| {
+            if key.len() == 1 {
+                key.parse::<u8>().ok().filter(|digit| *digit > 0)
+            } else {
+                None
+            }
+        })
+        .collect();
+    digits.sort_unstable();
+    digits.dedup();
+    if digits.len() >= 3 && digits.windows(2).all(|pair| pair[1] == pair[0] + 1) {
+        remaining.retain(|key| !digits.iter().any(|digit| key == &digit.to_string()));
+        names.push(format!("{}–{}", digits[0], digits[digits.len() - 1]));
+    }
+    names.extend(remaining.iter().map(|key| match key.as_str() {
+        "LEFT" => "←".into(),
+        "DOWN" => "↓".into(),
+        "UP" => "↑".into(),
+        "RIGHT" => "→".into(),
+        "ESCAPE" => "Esc".into(),
+        "RETURN" => "Enter".into(),
+        "SPACE" => "Space".into(),
+        "TAB" => "Tab".into(),
+        _ if key.len() == 1 => key.to_ascii_lowercase(),
+        _ => key.clone(),
+    }));
+    names.join("/")
+}
+
+fn key_name(modmask: u32, key: &str) -> String {
+    MODIFIERS
+        .iter()
+        .filter(|(mask, _)| modmask & mask != 0)
+        .map(|(_, name)| *name)
+        .chain([key])
+        .collect::<Vec<_>>()
+        .join("+")
 }
 
 fn socket_paths() -> io::Result<(PathBuf, PathBuf)> {
@@ -424,7 +694,7 @@ fn state_from_parts(
     workspaces: Vec<WorkspaceInfo>,
     active_workspace: ActiveWorkspace,
     active_window: ActiveWindow,
-    submap: Option<String>,
+    submap: Option<Submap>,
 ) -> State {
     let mut workspaces: Vec<_> = workspaces
         .into_iter()
@@ -491,7 +761,8 @@ fn parse_event(line: &str) -> Event {
         }
         "submap" => Event::Submap(normalize_submap(data)),
         "focusedmonv2" | "createworkspacev2" | "destroyworkspacev2" | "moveworkspacev2"
-        | "renameworkspace" | "closewindow" | "movewindowv2" | "urgent" => Event::Refresh,
+        | "renameworkspace" | "changeworkspaceid" | "closewindow" | "movewindowv2" | "urgent"
+        | "configreloaded" => Event::Refresh,
         _ => Event::Ignore,
     }
 }
@@ -584,8 +855,22 @@ mod tests {
         );
         assert_eq!(parse_event("submap>>"), Event::Submap(None));
         assert_eq!(parse_event("submap>>reset"), Event::Submap(None));
-        assert_eq!(parse_event("configreloaded>>"), Event::Ignore);
+        assert_eq!(parse_event("configreloaded>>"), Event::Refresh);
         assert_eq!(parse_event("windowtitle>>0x123"), Event::Ignore);
+    }
+
+    #[test]
+    fn workspace_id_changes_refresh_without_a_focus_change() {
+        for line in [
+            "changeworkspaceid>>1,4294967294",
+            "changeworkspaceid>>2,1",
+            "changeworkspaceid>>4294967294,2",
+        ] {
+            let event = parse_event(line);
+            assert_eq!(event, Event::Refresh);
+            assert!(event_needs_refresh(&event, Some("123")));
+            assert!(event_needs_refresh(&event, None));
+        }
     }
 
     #[test]
@@ -616,6 +901,151 @@ mod tests {
             Some("Resize windows".into())
         );
         assert!(parse_submap_query("Resize windows").is_err());
+    }
+
+    #[test]
+    fn lists_the_keys_bound_in_a_submap() {
+        let binds: Vec<Bind> = serde_json::from_str(
+            r#"[
+                {"modmask": 65, "submap": "", "key": "B", "catch_all": false, "mouse": false,
+                 "description": "Web browser submap", "dispatcher": "__lua"},
+                {"modmask": 0, "submap": "browser", "key": "P", "catch_all": false, "mouse": false,
+                 "description": "Main browser", "dispatcher": "__lua"},
+                {"modmask": 12, "submap": "browser", "key": "W", "catch_all": false, "mouse": false,
+                 "description": "", "dispatcher": "__lua"},
+                {"modmask": 64, "submap": "browser", "key": "mouse:272", "catch_all": false,
+                 "mouse": true, "description": "", "dispatcher": "__lua"},
+                {"modmask": 0, "submap": "browser", "key": "", "catch_all": true, "mouse": false,
+                 "description": "", "dispatcher": "__lua"}
+            ]"#,
+        )
+        .unwrap();
+
+        let keys = submap_keys(&binds, "browser");
+        assert_eq!(
+            keys,
+            [
+                SubmapKey {
+                    key: "p".into(),
+                    description: "Main browser".into(),
+                },
+                SubmapKey {
+                    key: "Ctrl+Alt+w".into(),
+                    description: String::new(),
+                },
+            ]
+        );
+        assert_eq!(
+            submap_keys_markup("browser", &keys),
+            format!("{SUBMAP_PREFIX}browser · <b>p</b> Main browser · <b>Ctrl+Alt+w</b>")
+        );
+    }
+
+    fn hint_bind(key: &str, description: &str, modmask: u32) -> Bind {
+        Bind {
+            submap: "resize".into(),
+            key: key.into(),
+            description: description.into(),
+            modmask,
+            catch_all: false,
+            mouse: false,
+            release: false,
+            long_press: false,
+        }
+    }
+
+    #[test]
+    fn groups_directional_aliases_but_keeps_modifiers_and_trigger_types_separate() {
+        let mut binds = ["h", "LEFT", "j", "DOWN", "k", "UP", "l", "RIGHT", "H"]
+            .into_iter()
+            .map(|key| hint_bind(key, "Resize", 0))
+            .collect::<Vec<_>>();
+        binds.push(hint_bind("h", "Resize", 1));
+        let mut release = hint_bind("h", "Resize", 0);
+        release.release = true;
+        binds.push(release);
+        let mut held = hint_bind("h", "Resize", 0);
+        held.long_press = true;
+        binds.push(held);
+        let keys = submap_keys(&binds, "resize");
+        assert_eq!(
+            keys.iter().map(|key| key.key.as_str()).collect::<Vec<_>>(),
+            ["hjkl/←↓↑→", "Shift+h", "h", "h"]
+        );
+    }
+
+    #[test]
+    fn formats_partial_arrows_and_keeps_unnamed_actions_separate() {
+        let binds = [
+            hint_bind("LEFT", "Move", 0),
+            hint_bind("h", "Move", 0),
+            hint_bind("UP", "", 0),
+            hint_bind("DOWN", "", 0),
+            hint_bind("ESCAPE", "Exit", 0),
+            hint_bind("RETURN", "Exit", 0),
+        ];
+        let keys = submap_keys(&binds, "resize");
+        assert_eq!(
+            keys.iter().map(|key| key.key.as_str()).collect::<Vec<_>>(),
+            ["←/h", "↑", "↓", "Esc/Enter"]
+        );
+    }
+
+    #[test]
+    fn compacts_only_contiguous_number_selectors() {
+        let full: Vec<_> = (1..=9).map(|n| n.to_string()).chain(["0".into()]).collect();
+        assert_eq!(key_set_name(&full), "1–9/0");
+        assert_eq!(key_set_name(&["1".into(), "3".into(), "5".into()]), "1/3/5");
+    }
+
+    #[test]
+    fn escapes_mode_names_and_descriptions() {
+        let markup = submap_keys_markup(
+            "<Resize>",
+            &[SubmapKey {
+                key: "<&".into(),
+                description: "<Resize & move>".into(),
+            }],
+        );
+        assert_eq!(
+            markup,
+            format!("{SUBMAP_PREFIX}&lt;Resize&gt; · <b>&lt;&amp;</b> &lt;Resize &amp; move&gt;")
+        );
+    }
+
+    #[test]
+    fn overflow_keeps_whole_groups_mode_and_exit_hint() {
+        let submap = Submap {
+            name: "Resize".into(),
+            keys: vec![
+                SubmapKey {
+                    key: "hjkl/←↓↑→".into(),
+                    description: "Resize".into(),
+                },
+                SubmapKey {
+                    key: "Shift+hjkl".into(),
+                    description: "Precise".into(),
+                },
+                SubmapKey {
+                    key: "Esc/Enter".into(),
+                    description: "Exit".into(),
+                },
+            ],
+        };
+        let full = fit_submap_markup(&submap, |_| true);
+        assert_eq!(full, submap_keys_markup(&submap.name, &submap.keys));
+        let compact = fit_submap_markup(&submap, |markup| !markup.contains("Precise"));
+        assert_eq!(
+            compact,
+            format!(
+                "{SUBMAP_PREFIX}Resize · <b>hjkl/←↓↑→</b> Resize · <b>+1</b> more · <b>Esc/Enter</b> Exit"
+            )
+        );
+        let narrow = fit_submap_markup(&submap, |_| false);
+        assert_eq!(
+            narrow,
+            format!("{SUBMAP_PREFIX}Resize · <b>+2</b> more · <b>Esc/Enter</b> Exit")
+        );
     }
 
     #[test]
