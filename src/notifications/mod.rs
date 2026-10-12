@@ -1,4 +1,5 @@
 mod daemon;
+mod hook;
 mod image;
 mod model;
 mod sound;

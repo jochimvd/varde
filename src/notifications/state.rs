@@ -87,16 +87,19 @@ pub(super) struct Store {
     dnd: bool,
 }
 
+pub(super) struct Received {
+    pub id: u32,
+    pub replaced: bool,
+    pub evicted: Option<(u32, CloseReason)>,
+}
+
 impl Store {
     #[cfg(test)]
     pub fn notify(&mut self, incoming: Incoming) -> u32 {
-        self.notify_with_eviction(incoming).0
+        self.notify_with_eviction(incoming).id
     }
 
-    pub fn notify_with_eviction(
-        &mut self,
-        incoming: Incoming,
-    ) -> (u32, Option<(u32, CloseReason)>) {
+    pub fn notify_with_eviction(&mut self, incoming: Incoming) -> Received {
         let replacement = self.replacement_index(&incoming);
         let evicted = replacement
             .is_none()
@@ -144,7 +147,11 @@ impl Store {
         } else {
             self.notifications.insert(0, stored);
         }
-        (id, evicted)
+        Received {
+            id,
+            replaced: replacement.is_some(),
+            evicted,
+        }
     }
 
     pub fn close(&mut self, id: u32) -> bool {
@@ -555,7 +562,10 @@ mod tests {
         let mut store = Store::default();
         let mut evicted = Vec::new();
         for index in 0..MAX_NOTIFICATIONS + 5 {
-            if let Some((id, _)) = store.notify_with_eviction(incoming(&index.to_string())).1 {
+            if let Some((id, _)) = store
+                .notify_with_eviction(incoming(&index.to_string()))
+                .evicted
+            {
                 evicted.push(id);
             }
         }
@@ -571,7 +581,7 @@ mod tests {
         for index in 1..MAX_NOTIFICATIONS {
             store.notify(incoming(&index.to_string()));
         }
-        let (id, evicted) = store.notify_with_eviction(Incoming {
+        let Received { id, evicted, .. } = store.notify_with_eviction(Incoming {
             replaces_id: first,
             ..incoming("replacement")
         });
@@ -587,7 +597,7 @@ mod tests {
         for index in 1..MAX_NOTIFICATIONS {
             store.notify(incoming(&index.to_string()));
         }
-        let (_, evicted) = store.notify_with_eviction(incoming("new"));
+        let Received { evicted, .. } = store.notify_with_eviction(incoming("new"));
         assert_eq!(evicted, Some((oldest, CloseReason::Undefined)));
         assert!(notification(&store, oldest).is_none());
         assert_eq!(store.notifications().count(), MAX_NOTIFICATIONS);

@@ -110,6 +110,10 @@ fn wait_until(child: &mut Child, deadline: Instant) -> Option<std::process::Exit
 }
 
 pub(crate) fn spawn_child(program: &str, args: &[&str]) -> Option<Child> {
+    child_command(program, args).spawn().ok()
+}
+
+pub(crate) fn child_command(program: &str, args: &[&str]) -> Command {
     let mut command = Command::new(program);
     command
         .args(args)
@@ -126,7 +130,7 @@ pub(crate) fn spawn_child(program: &str, args: &[&str]) -> Option<Child> {
             Ok(())
         });
     }
-    command.spawn().ok()
+    command
 }
 
 /// Kills the child and anything it started, so nothing is left holding its

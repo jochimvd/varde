@@ -136,6 +136,22 @@ no terminal is opened automatically. For an interactive command, launch your
 terminal explicitly in `command`. Output and command failures go to Varde's
 logs (the user journal when running as a service).
 
+## Notification hook
+
+To run a helper on incoming notifications, add
+`~/.config/varde/notifications.toml` (or `$XDG_CONFIG_HOME/varde/notifications.toml`):
+
+```toml
+[hook]
+argv = ["/path/to/notification-forwarder"]
+timeout_ms = 3000
+```
+
+Arguments are literal, with no shell expansion. Each
+invocation receives one JSON event on stdin, including app identity, title,
+body, notification ID/revision, replacement flag, and DND state. See
+[`Event`](src/notifications/hook.rs) for all fields.
+
 ## Customize
 
 The bar layout is in `src/bar/mod.rs`, modules are under `src/bar/modules/`,
