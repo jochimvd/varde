@@ -11,6 +11,7 @@ use std::{
 use zbus::{interface, zvariant::OwnedValue};
 
 use super::{
+    hook::Hook,
     image::{self, Thumbnail},
     model::{self, Snapshot},
     sound::{Player, Sound},
@@ -86,6 +87,7 @@ struct Shared {
     changes: async_channel::Sender<()>,
     commands: mpsc::Sender<Command>,
     sounds: Option<Player>,
+    hook: Option<Hook>,
 }
 
 impl Shared {
@@ -118,6 +120,7 @@ pub(super) fn start(changes: async_channel::Sender<()>) -> Option<Control> {
         changes,
         commands,
         sounds: Player::start(),
+        hook: Hook::start(),
     };
     crate::background::spawn("notification-daemon", move || run(shared, receiver))
         .then_some(control)
@@ -391,7 +394,17 @@ impl Notifications {
         };
         let mut store = self.0.store.lock().expect("notification store poisoned");
         let play_sound = !store.dnd();
-        let (id, evicted) = store.notify_with_eviction(incoming);
+        let received = store.notify_with_eviction(incoming);
+        let id = received.id;
+        if let Some(hook) = &self.0.hook {
+            let notification = store
+                .notifications()
+                .find(|(notification, _)| notification.id == id)
+                .expect("notification was just stored")
+                .0;
+            // Enqueue under the store lock to preserve receipt order across callers.
+            hook.received(notification, received.replaced, store.dnd());
+        }
         drop(store);
         if play_sound
             && let Some(sound) = sound
@@ -400,7 +413,7 @@ impl Notifications {
             player.play(sound);
         }
         self.0.publish();
-        if let Some((id, reason)) = evicted {
+        if let Some((id, reason)) = received.evicted {
             let _ = self.0.commands.send(Command::EmitClosed(id, reason));
         } else {
             self.0.wake();
@@ -602,6 +615,68 @@ mod tests {
     use super::*;
 
     static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn hook_receives_bounded_events_and_real_replacements_during_dnd() {
+        let (hook, events) = Hook::capture();
+        let (changes, _views) = async_channel::bounded(1);
+        let (commands, _commands) = mpsc::channel();
+        let mut store = Store::default();
+        store.set_dnd(true);
+        let daemon = Notifications(Shared {
+            store: Arc::new(Mutex::new(store)),
+            available: Arc::new(AtomicBool::new(true)),
+            changes,
+            commands,
+            sounds: None,
+            hook: Some(hook),
+        });
+        let hints = || {
+            HashMap::from([
+                (
+                    "desktop-entry".into(),
+                    OwnedValue::from(zbus::zvariant::Str::from("chat")),
+                ),
+                (
+                    "x-dunst-stack-tag".into(),
+                    OwnedValue::from(zbus::zvariant::Str::from("thread")),
+                ),
+                ("urgency".into(), OwnedValue::from(2_u8)),
+            ])
+        };
+        let body = "🦀".repeat(MAX_BODY_BYTES);
+        let first = daemon.notify("Chat", 999, "", "Alice", &body, vec![], hints(), 0);
+        let second = daemon.notify("Chat", first, "", "Alice", "second", vec![], hints(), 0);
+        let third = daemon.notify("Chat", 0, "", "Alice", "third", vec![], hints(), 0);
+        assert_eq!((first, second), (second, third));
+
+        let payloads = events
+            .try_iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(payloads.len(), 3);
+        for (index, payload) in payloads.iter().enumerate() {
+            assert_eq!(payload["version"], 1);
+            assert_eq!(payload["event"], "received");
+            assert_eq!(payload["session"], "test-session");
+            assert_eq!(payload["id"], first);
+            assert_eq!(payload["revision"], index + 1);
+            assert_eq!(payload["replaced"], index != 0);
+            assert_eq!(payload["app_name"], "Chat");
+            assert_eq!(payload["desktop_entry"], "chat");
+            assert_eq!(payload["summary"], "Alice");
+            assert_eq!(payload["urgency"], "critical");
+            assert_eq!(payload["dnd"], true);
+        }
+        assert_eq!(payloads[0]["body"].as_str().unwrap().len(), MAX_BODY_BYTES);
+        assert_eq!(payloads[2]["body"], "third");
+
+        daemon.0.publish();
+        let mut store = daemon.0.store.lock().unwrap();
+        store.displayed(first, 3, Instant::now());
+        store.clear();
+        assert!(events.try_recv().is_err());
+    }
 
     fn png(width: i32, height: i32, color: u32) -> std::path::PathBuf {
         let number = NEXT_FILE.fetch_add(1, Ordering::Relaxed);
