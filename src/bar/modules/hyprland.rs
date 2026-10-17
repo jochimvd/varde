@@ -12,22 +12,15 @@ use gtk::{glib, prelude::*};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::background;
+use crate::{
+    background,
+    title::{self, Item, Overlay},
+};
 
 const IPC_TIMEOUT: Duration = Duration::from_secs(2);
 const TITLE_UPDATE_INTERVAL: Duration = Duration::from_millis(50);
-const SUBMAP_PREFIX: &str = "󰌌 ";
-const SUBMAP_KEYS_DELAY: Duration = Duration::from_millis(300);
-const MODIFIERS: [(u32, &str); 6] = [
-    (64, "Super"),
-    (4, "Ctrl"),
-    (8, "Alt"),
-    (1, "Shift"),
-    (32, "MOD3"),
-    (128, "MOD5"),
-];
 
-pub fn widget() -> gtk::Box {
+pub fn widget(title: &Rc<title::Manager>) -> gtk::Box {
     let root = gtk::Box::builder()
         .spacing(crate::bar::MODULE_GAP)
         .hexpand(true)
@@ -63,12 +56,18 @@ pub fn widget() -> gtk::Box {
             false
         }
     });
-    let window = WindowTitle {
+    let window = Rc::new(WindowTitle {
         label,
+        title: RefCell::default(),
+        overlay: RefCell::default(),
         generation: Rc::default(),
         fit_handler: Rc::default(),
         tooltip_grid,
-    };
+    });
+    title.connect({
+        let window = window.clone();
+        move |overlay| window.set_overlay(overlay.cloned())
+    });
 
     let (updates_tx, updates_rx) = async_channel::unbounded();
     background::spawn("hyprland-events", move || run_worker(updates_tx));
@@ -83,14 +82,8 @@ pub fn widget() -> gtk::Box {
             update_workspace_classes(&workspaces, &state);
         }
         Update::Title(title) => {
+            window.set_title(&title);
             state.title = title;
-            if state.submap.is_none() {
-                window.label.set_text(&state.title);
-            }
-        }
-        Update::Submap(submap) => {
-            state.submap = submap;
-            window.show(&state);
         }
     });
 
@@ -102,19 +95,6 @@ struct State {
     workspaces: Vec<Workspace>,
     active_id: Option<i64>,
     title: String,
-    submap: Option<Submap>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Submap {
-    name: String,
-    keys: Vec<SubmapKey>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct SubmapKey {
-    key: String,
-    description: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -128,20 +108,33 @@ enum Update {
     State(State),
     ActiveWorkspace(i64),
     Title(String),
-    Submap(Option<Submap>),
 }
 
 struct WindowTitle {
     label: gtk::Label,
-    /// Bumped on every change so a pending switch to the submap keys only
-    /// applies to the submap it was scheduled for.
+    title: RefCell<String>,
+    overlay: RefCell<Option<Overlay>>,
+    /// Bumped on every change so a pending switch to the overlay items only
+    /// applies to the overlay it was scheduled for.
     generation: Rc<Cell<u64>>,
     fit_handler: Rc<RefCell<Option<(gtk::gdk::FrameClock, glib::SignalHandlerId)>>>,
     tooltip_grid: Rc<RefCell<Option<gtk::Grid>>>,
 }
 
 impl WindowTitle {
-    fn show(&self, state: &State) {
+    fn set_title(&self, title: &str) {
+        self.title.replace(title.to_owned());
+        if self.overlay.borrow().is_none() {
+            self.label.set_text(title);
+        }
+    }
+
+    fn set_overlay(&self, overlay: Option<Overlay>) {
+        self.overlay.replace(overlay);
+        self.show();
+    }
+
+    fn show(&self) {
         let generation = self.generation.get().wrapping_add(1);
         self.generation.set(generation);
         if let Some((clock, handler)) = self.fit_handler.borrow_mut().take() {
@@ -150,29 +143,28 @@ impl WindowTitle {
 
         self.label.set_has_tooltip(false);
         self.tooltip_grid.borrow_mut().take();
-        let Some(submap) = &state.submap else {
-            self.label.set_text(&state.title);
-            self.label.remove_css_class("submap");
+        let Some(overlay) = self.overlay.borrow().clone() else {
+            self.label.set_text(&self.title.borrow());
+            self.label.remove_css_class("overlay");
             return;
         };
-        self.label
-            .set_text(&format!("{SUBMAP_PREFIX}{}", submap.name));
-        self.label.add_css_class("submap");
-        if submap.keys.is_empty() {
+        self.label.set_text(&heading(&overlay));
+        self.label.add_css_class("overlay");
+        if overlay.items.is_empty() {
             return;
         }
 
         let label = self.label.clone();
         let current = self.generation.clone();
         let fit_handler = self.fit_handler.clone();
-        let submap = submap.clone();
-        *self.tooltip_grid.borrow_mut() = Some(submap_tooltip(&submap));
+        *self.tooltip_grid.borrow_mut() = Some(overlay_tooltip(&overlay));
         self.label.set_has_tooltip(true);
-        glib::timeout_add_local_once(SUBMAP_KEYS_DELAY, move || {
+        let delay = Duration::from_millis(overlay.items_delay_ms);
+        glib::timeout_add_local_once(delay, move || {
             if current.get() != generation {
                 return;
             }
-            label.set_markup(&submap_keys_markup(&submap.name, &submap.keys));
+            label.set_markup(&overlay_markup(&overlay, &overlay.items));
             let Some(clock) = label.frame_clock() else {
                 return;
             };
@@ -186,7 +178,7 @@ impl WindowTitle {
                 if available > 0 && available != width.get() {
                     width.set(available);
                     let layout = label.create_pango_layout(None);
-                    let markup = fit_submap_markup(&submap, |markup| {
+                    let markup = fit_overlay_markup(&overlay, |markup| {
                         layout.set_markup(markup);
                         layout.pixel_size().0 <= available
                     });
@@ -198,7 +190,15 @@ impl WindowTitle {
     }
 }
 
-fn submap_tooltip(submap: &Submap) -> gtk::Grid {
+fn heading(overlay: &Overlay) -> String {
+    if overlay.icon.is_empty() {
+        overlay.text.clone()
+    } else {
+        format!("{} {}", overlay.icon, overlay.text)
+    }
+}
+
+fn overlay_tooltip(overlay: &Overlay) -> gtk::Grid {
     let grid = gtk::Grid::builder()
         .column_spacing(18)
         .row_spacing(4)
@@ -207,13 +207,13 @@ fn submap_tooltip(submap: &Submap) -> gtk::Grid {
     heading.set_xalign(0.0);
     heading.set_markup(&format!(
         "<b>{}</b>",
-        glib::markup_escape_text(&submap.name)
+        glib::markup_escape_text(&overlay.text)
     ));
     grid.attach(&heading, 0, 0, 2, 1);
-    for (row, hint) in submap.keys.iter().enumerate() {
-        let key = gtk::Label::new(Some(&hint.key));
+    for (row, item) in overlay.items.iter().enumerate() {
+        let key = gtk::Label::new(Some(&item.key));
         key.set_xalign(0.0);
-        let description = gtk::Label::new(Some(&hint.description));
+        let description = gtk::Label::new(Some(&item.label));
         description.set_xalign(0.0);
         grid.attach(&key, 0, row as i32 + 1, 1, 1);
         grid.attach(&description, 1, row as i32 + 1, 1, 1);
@@ -284,27 +284,12 @@ struct ActiveWindow {
     title: String,
 }
 
-#[derive(Deserialize)]
-struct Bind {
-    submap: String,
-    key: String,
-    modmask: u32,
-    description: String,
-    catch_all: bool,
-    mouse: bool,
-    #[serde(default)]
-    release: bool,
-    #[serde(default, rename = "longPress")]
-    long_press: bool,
-}
-
 #[derive(Debug, Eq, PartialEq)]
 enum Event {
     Refresh,
     Workspace(i64),
     ActiveWindow(Option<String>),
     Title { address: String, title: String },
-    Submap(Option<String>),
     Ignore,
 }
 
@@ -320,42 +305,38 @@ fn render(workspaces: &gtk::Box, window: &WindowTitle, current: &State, next: &S
         update_workspace_classes(workspaces, next);
     }
 
-    if current.submap != next.submap || next.submap.is_none() && current.title != next.title {
-        window.show(next);
+    if current.title != next.title {
+        window.set_title(&next.title);
     }
 }
 
-fn submap_keys_markup(name: &str, keys: &[SubmapKey]) -> String {
-    let mut parts = vec![format!("{SUBMAP_PREFIX}{}", glib::markup_escape_text(name))];
-    parts.extend(keys.iter().map(|key| {
-        let name = glib::markup_escape_text(&key.key);
-        if key.description.is_empty() {
-            format!("<b>{name}</b>")
+fn overlay_markup(overlay: &Overlay, items: &[Item]) -> String {
+    let mut parts = vec![glib::markup_escape_text(&heading(overlay)).to_string()];
+    parts.extend(items.iter().map(|item| {
+        let key = glib::markup_escape_text(&item.key);
+        if item.label.is_empty() {
+            format!("<b>{key}</b>")
         } else {
-            format!(
-                "<b>{name}</b> {}",
-                glib::markup_escape_text(&key.description)
-            )
+            format!("<b>{key}</b> {}", glib::markup_escape_text(&item.label))
         }
     }));
     parts.join(" · ")
 }
 
-fn fit_submap_markup(submap: &Submap, fits: impl Fn(&str) -> bool) -> String {
-    let (exits, actions): (Vec<_>, Vec<_>) = submap.keys.iter().cloned().partition(|key| {
-        key.description.eq_ignore_ascii_case("exit")
-            || key.description.eq_ignore_ascii_case("cancel")
-    });
+fn fit_overlay_markup(overlay: &Overlay, fits: impl Fn(&str) -> bool) -> String {
+    let (pinned, actions): (Vec<_>, Vec<_>) =
+        overlay.items.iter().cloned().partition(|item| item.pinned);
     for count in (0..=actions.len()).rev() {
         let mut shown = actions[..count].to_vec();
         if count < actions.len() {
-            shown.push(SubmapKey {
+            shown.push(Item {
                 key: format!("+{}", actions.len() - count),
-                description: "more".into(),
+                label: "more".into(),
+                pinned: false,
             });
         }
-        shown.extend(exits.iter().cloned());
-        let markup = submap_keys_markup(&submap.name, &shown);
+        shown.extend(pinned.iter().cloned());
+        let markup = overlay_markup(overlay, &shown);
         if fits(&markup) || count == 0 {
             return markup;
         }
@@ -474,11 +455,6 @@ fn run_worker(updates: async_channel::Sender<Update>) {
                         {
                             title_updates.queue(title.clone());
                             send_ready_title(&updates, &mut title_updates);
-                        } else if let Event::Submap(name) = event {
-                            let submap = socket_paths().ok().and_then(|(request_socket, _)| {
-                                query_submap(&request_socket, name)
-                            });
-                            let _ = updates.send_blocking(Update::Submap(submap));
                         }
                         line.clear();
                     }
@@ -505,8 +481,6 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
     let mut workspaces: Vec<WorkspaceInfo> = request_json(&request_socket, "j/workspaces")?;
     let active_workspace: ActiveWorkspace = request_json(&request_socket, "j/activeworkspace")?;
     let active_window: ActiveWindow = request_json(&request_socket, "j/activewindow")?;
-    let submap = request(&request_socket, "repl ':' .. hl.get_current_submap()")?;
-    let submap = query_submap(&request_socket, parse_submap_query(&submap)?);
     let mut shown: Vec<_> = workspaces
         .iter_mut()
         .filter(|workspace| is_shown(workspace, &active_workspace))
@@ -519,105 +493,10 @@ fn refresh(updates: &async_channel::Sender<Update>) -> io::Result<Option<String>
         }
     }
     let active_address = normalize_address(&active_window.address);
-    let state = state_from_parts(workspaces, active_workspace, active_window, submap);
+    let state = state_from_parts(workspaces, active_workspace, active_window);
 
     let _ = updates.send_blocking(Update::State(state));
     Ok(active_address)
-}
-
-/// Looks up the keys bound in the named submap; if Hyprland cannot list them
-/// the submap is still shown, just without its keys.
-fn query_submap(socket: &Path, name: Option<String>) -> Option<Submap> {
-    let name = name?;
-    let binds: Vec<Bind> = request_json(socket, "j/binds").unwrap_or_default();
-    let keys = submap_keys(&binds, &name);
-    Some(Submap { name, keys })
-}
-
-fn submap_keys(binds: &[Bind], submap: &str) -> Vec<SubmapKey> {
-    let mut groups: Vec<(&Bind, Vec<String>)> = Vec::new();
-    for bind in binds.iter().filter(|bind| {
-        bind.submap == submap && !bind.catch_all && !bind.mouse && !bind.key.is_empty()
-    }) {
-        let key = bind.key.to_ascii_uppercase();
-        let existing = groups.iter_mut().find(|(first, _)| {
-            !bind.description.is_empty()
-                && first.description == bind.description
-                && first.modmask == bind.modmask
-                && first.release == bind.release
-                && first.long_press == bind.long_press
-        });
-        if let Some((_, keys)) = existing {
-            if !keys.contains(&key) {
-                keys.push(key);
-            }
-        } else {
-            groups.push((bind, vec![key]));
-        }
-    }
-    groups
-        .into_iter()
-        .map(|(bind, keys)| SubmapKey {
-            key: key_name(bind.modmask, &key_set_name(&keys)),
-            description: bind.description.clone(),
-        })
-        .collect()
-}
-
-fn key_set_name(keys: &[String]) -> String {
-    let mut remaining = keys.to_vec();
-    let mut names = Vec::new();
-    for (set, label) in [
-        (["H", "J", "K", "L"].as_slice(), "hjkl"),
-        (["LEFT", "DOWN", "UP", "RIGHT"].as_slice(), "←↓↑→"),
-    ] {
-        if set
-            .iter()
-            .all(|key| remaining.iter().any(|item| item == key))
-        {
-            remaining.retain(|key| !set.contains(&key.as_str()));
-            names.push(label.to_owned());
-        }
-    }
-    let mut digits: Vec<_> = remaining
-        .iter()
-        .filter_map(|key| {
-            if key.len() == 1 {
-                key.parse::<u8>().ok().filter(|digit| *digit > 0)
-            } else {
-                None
-            }
-        })
-        .collect();
-    digits.sort_unstable();
-    digits.dedup();
-    if digits.len() >= 3 && digits.windows(2).all(|pair| pair[1] == pair[0] + 1) {
-        remaining.retain(|key| !digits.iter().any(|digit| key == &digit.to_string()));
-        names.push(format!("{}–{}", digits[0], digits[digits.len() - 1]));
-    }
-    names.extend(remaining.iter().map(|key| match key.as_str() {
-        "LEFT" => "←".into(),
-        "DOWN" => "↓".into(),
-        "UP" => "↑".into(),
-        "RIGHT" => "→".into(),
-        "ESCAPE" => "Esc".into(),
-        "RETURN" => "Enter".into(),
-        "SPACE" => "Space".into(),
-        "TAB" => "Tab".into(),
-        _ if key.len() == 1 => key.to_ascii_lowercase(),
-        _ => key.clone(),
-    }));
-    names.join("/")
-}
-
-fn key_name(modmask: u32, key: &str) -> String {
-    MODIFIERS
-        .iter()
-        .filter(|(mask, _)| modmask & mask != 0)
-        .map(|(_, name)| *name)
-        .chain([key])
-        .collect::<Vec<_>>()
-        .join("+")
 }
 
 fn socket_paths() -> io::Result<(PathBuf, PathBuf)> {
@@ -694,7 +573,6 @@ fn state_from_parts(
     workspaces: Vec<WorkspaceInfo>,
     active_workspace: ActiveWorkspace,
     active_window: ActiveWindow,
-    submap: Option<Submap>,
 ) -> State {
     let mut workspaces: Vec<_> = workspaces
         .into_iter()
@@ -716,23 +594,7 @@ fn state_from_parts(
         workspaces,
         active_id: Some(active_workspace.id),
         title: active_window.title,
-        submap,
     }
-}
-
-fn parse_submap_query(response: &str) -> io::Result<Option<String>> {
-    let response = response.trim_end_matches(['\r', '\n']);
-    let submap = response.strip_prefix(':').ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Hyprland returned an invalid submap response",
-        )
-    })?;
-    Ok(normalize_submap(submap))
-}
-
-fn normalize_submap(submap: &str) -> Option<String> {
-    (!submap.is_empty() && submap != "reset").then(|| submap.to_owned())
 }
 
 fn parse_event(line: &str) -> Event {
@@ -759,7 +621,6 @@ fn parse_event(line: &str) -> Event {
                 title: title.into(),
             }
         }
-        "submap" => Event::Submap(normalize_submap(data)),
         "focusedmonv2" | "createworkspacev2" | "destroyworkspacev2" | "moveworkspacev2"
         | "renameworkspace" | "changeworkspaceid" | "closewindow" | "movewindowv2" | "urgent"
         | "configreloaded" => Event::Refresh,
@@ -780,7 +641,7 @@ fn event_needs_refresh(event: &Event, active_address: Option<&str>) -> bool {
     match event {
         Event::Refresh => true,
         Event::ActiveWindow(address) => address.as_deref() != active_address,
-        Event::Workspace(_) | Event::Title { .. } | Event::Submap(_) | Event::Ignore => false,
+        Event::Workspace(_) | Event::Title { .. } | Event::Ignore => false,
     }
 }
 
@@ -807,12 +668,10 @@ mod tests {
             .unwrap(),
             serde_json::from_str(r#"{"id": 1, "monitor": "DP-1"}"#).unwrap(),
             serde_json::from_str(r#"{"title": "Terminal"}"#).unwrap(),
-            None,
         );
 
         assert_eq!(state.active_id, Some(1));
         assert_eq!(state.title, "Terminal");
-        assert_eq!(state.submap, None);
         assert_eq!(
             state.workspaces,
             vec![
@@ -849,12 +708,7 @@ mod tests {
         assert_eq!(parse_event("focusedmonv2>>DP-1,2"), Event::Refresh);
         assert_eq!(parse_event("focusedmon>>DP-1,2"), Event::Ignore);
         assert_eq!(parse_event("urgent>>0x123"), Event::Refresh);
-        assert_eq!(
-            parse_event("submap>>Resize windows"),
-            Event::Submap(Some("Resize windows".into()))
-        );
-        assert_eq!(parse_event("submap>>"), Event::Submap(None));
-        assert_eq!(parse_event("submap>>reset"), Event::Submap(None));
+        assert_eq!(parse_event("submap>>Resize windows"), Event::Ignore);
         assert_eq!(parse_event("configreloaded>>"), Event::Refresh);
         assert_eq!(parse_event("windowtitle>>0x123"), Event::Ignore);
     }
@@ -892,160 +746,50 @@ mod tests {
         assert_eq!(normalize_address("0x"), None);
     }
 
-    #[test]
-    fn parses_the_current_submap_query() {
-        assert_eq!(parse_submap_query(":\n").unwrap(), None);
-        assert_eq!(parse_submap_query(":reset").unwrap(), None);
-        assert_eq!(
-            parse_submap_query(":Resize windows\n").unwrap(),
-            Some("Resize windows".into())
-        );
-        assert!(parse_submap_query("Resize windows").is_err());
-    }
-
-    #[test]
-    fn lists_the_keys_bound_in_a_submap() {
-        let binds: Vec<Bind> = serde_json::from_str(
-            r#"[
-                {"modmask": 65, "submap": "", "key": "B", "catch_all": false, "mouse": false,
-                 "description": "Web browser submap", "dispatcher": "__lua"},
-                {"modmask": 0, "submap": "browser", "key": "P", "catch_all": false, "mouse": false,
-                 "description": "Main browser", "dispatcher": "__lua"},
-                {"modmask": 12, "submap": "browser", "key": "W", "catch_all": false, "mouse": false,
-                 "description": "", "dispatcher": "__lua"},
-                {"modmask": 64, "submap": "browser", "key": "mouse:272", "catch_all": false,
-                 "mouse": true, "description": "", "dispatcher": "__lua"},
-                {"modmask": 0, "submap": "browser", "key": "", "catch_all": true, "mouse": false,
-                 "description": "", "dispatcher": "__lua"}
-            ]"#,
+    fn overlay(icon: &str, text: &str, items: serde_json::Value) -> Overlay {
+        title::parse(
+            &serde_json::json!({"version": 1, "id": "test", "icon": icon, "text": text, "items": items})
+                .to_string(),
         )
-        .unwrap();
-
-        let keys = submap_keys(&binds, "browser");
-        assert_eq!(
-            keys,
-            [
-                SubmapKey {
-                    key: "p".into(),
-                    description: "Main browser".into(),
-                },
-                SubmapKey {
-                    key: "Ctrl+Alt+w".into(),
-                    description: String::new(),
-                },
-            ]
-        );
-        assert_eq!(
-            submap_keys_markup("browser", &keys),
-            format!("{SUBMAP_PREFIX}browser · <b>p</b> Main browser · <b>Ctrl+Alt+w</b>")
-        );
-    }
-
-    fn hint_bind(key: &str, description: &str, modmask: u32) -> Bind {
-        Bind {
-            submap: "resize".into(),
-            key: key.into(),
-            description: description.into(),
-            modmask,
-            catch_all: false,
-            mouse: false,
-            release: false,
-            long_press: false,
-        }
+        .unwrap()
     }
 
     #[test]
-    fn groups_directional_aliases_but_keeps_modifiers_and_trigger_types_separate() {
-        let mut binds = ["h", "LEFT", "j", "DOWN", "k", "UP", "l", "RIGHT", "H"]
-            .into_iter()
-            .map(|key| hint_bind(key, "Resize", 0))
-            .collect::<Vec<_>>();
-        binds.push(hint_bind("h", "Resize", 1));
-        let mut release = hint_bind("h", "Resize", 0);
-        release.release = true;
-        binds.push(release);
-        let mut held = hint_bind("h", "Resize", 0);
-        held.long_press = true;
-        binds.push(held);
-        let keys = submap_keys(&binds, "resize");
-        assert_eq!(
-            keys.iter().map(|key| key.key.as_str()).collect::<Vec<_>>(),
-            ["hjkl/←↓↑→", "Shift+h", "h", "h"]
-        );
-    }
-
-    #[test]
-    fn formats_partial_arrows_and_keeps_unnamed_actions_separate() {
-        let binds = [
-            hint_bind("LEFT", "Move", 0),
-            hint_bind("h", "Move", 0),
-            hint_bind("UP", "", 0),
-            hint_bind("DOWN", "", 0),
-            hint_bind("ESCAPE", "Exit", 0),
-            hint_bind("RETURN", "Exit", 0),
-        ];
-        let keys = submap_keys(&binds, "resize");
-        assert_eq!(
-            keys.iter().map(|key| key.key.as_str()).collect::<Vec<_>>(),
-            ["←/h", "↑", "↓", "Esc/Enter"]
-        );
-    }
-
-    #[test]
-    fn compacts_only_contiguous_number_selectors() {
-        let full: Vec<_> = (1..=9).map(|n| n.to_string()).chain(["0".into()]).collect();
-        assert_eq!(key_set_name(&full), "1–9/0");
-        assert_eq!(key_set_name(&["1".into(), "3".into(), "5".into()]), "1/3/5");
-    }
-
-    #[test]
-    fn escapes_mode_names_and_descriptions() {
-        let markup = submap_keys_markup(
+    fn escapes_overlay_text_and_items() {
+        let overlay = overlay(
+            "",
             "<Resize>",
-            &[SubmapKey {
-                key: "<&".into(),
-                description: "<Resize & move>".into(),
-            }],
+            serde_json::json!([{"key": "<&", "label": "<Resize & move>"}, {"key": "x"}]),
         );
         assert_eq!(
-            markup,
-            format!("{SUBMAP_PREFIX}&lt;Resize&gt; · <b>&lt;&amp;</b> &lt;Resize &amp; move&gt;")
+            overlay_markup(&overlay, &overlay.items),
+            "&lt;Resize&gt; · <b>&lt;&amp;</b> &lt;Resize &amp; move&gt; · <b>x</b>"
         );
     }
 
     #[test]
-    fn overflow_keeps_whole_groups_mode_and_exit_hint() {
-        let submap = Submap {
-            name: "Resize".into(),
-            keys: vec![
-                SubmapKey {
-                    key: "hjkl/←↓↑→".into(),
-                    description: "Resize".into(),
-                },
-                SubmapKey {
-                    key: "Shift+hjkl".into(),
-                    description: "Precise".into(),
-                },
-                SubmapKey {
-                    key: "Esc/Enter".into(),
-                    description: "Exit".into(),
-                },
-            ],
-        };
-        let full = fit_submap_markup(&submap, |_| true);
-        assert_eq!(full, submap_keys_markup(&submap.name, &submap.keys));
-        let compact = fit_submap_markup(&submap, |markup| !markup.contains("Precise"));
+    fn overflow_keeps_whole_items_heading_and_pinned_items() {
+        let overlay = overlay(
+            "󰌌",
+            "Resize",
+            serde_json::json!([
+                {"key": "hjkl/←↓↑→", "label": "Resize"},
+                {"key": "Esc/Enter", "label": "Exit", "pinned": true},
+                {"key": "Shift+hjkl", "label": "Precise"},
+            ]),
+        );
+        let full = fit_overlay_markup(&overlay, |_| true);
+        assert_eq!(
+            full,
+            "󰌌 Resize · <b>hjkl/←↓↑→</b> Resize · <b>Shift+hjkl</b> Precise · <b>Esc/Enter</b> Exit"
+        );
+        let compact = fit_overlay_markup(&overlay, |markup| !markup.contains("Precise"));
         assert_eq!(
             compact,
-            format!(
-                "{SUBMAP_PREFIX}Resize · <b>hjkl/←↓↑→</b> Resize · <b>+1</b> more · <b>Esc/Enter</b> Exit"
-            )
+            "󰌌 Resize · <b>hjkl/←↓↑→</b> Resize · <b>+1</b> more · <b>Esc/Enter</b> Exit"
         );
-        let narrow = fit_submap_markup(&submap, |_| false);
-        assert_eq!(
-            narrow,
-            format!("{SUBMAP_PREFIX}Resize · <b>+2</b> more · <b>Esc/Enter</b> Exit")
-        );
+        let narrow = fit_overlay_markup(&overlay, |_| false);
+        assert_eq!(narrow, "󰌌 Resize · <b>+2</b> more · <b>Esc/Enter</b> Exit");
     }
 
     #[test]
@@ -1143,7 +887,6 @@ mod tests {
             }],
             active_id: Some(1),
             title: "one".into(),
-            submap: None,
         };
         let mut changed = state.clone();
         changed.active_id = Some(2);
