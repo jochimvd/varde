@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
 
-use gtk::glib;
+use gtk::{gio, glib, prelude::*};
 use serde::Deserialize;
 
 const MAX_TTL_MS: u64 = 3_600_000;
@@ -50,6 +50,37 @@ pub fn parse(json: &str) -> Result<Overlay, String> {
         ));
     }
     Ok(overlay)
+}
+
+/// Exposes `title-set (ts)` and `title-clear (ts)` as application actions, so
+/// callers on the session bus can skip starting a `varde` client. A sequence
+/// number of 0 means none.
+pub fn add_actions(app: &gtk::Application, manager: &Rc<Manager>) {
+    let parameter = glib::VariantTy::new("(ts)").expect("valid variant type");
+    let set = gio::SimpleAction::new("title-set", Some(parameter));
+    set.connect_activate({
+        let manager = manager.clone();
+        move |_, parameter| {
+            let Some((seq, json)) = parameter.and_then(|value| value.get::<(u64, String)>()) else {
+                return;
+            };
+            match parse(&json) {
+                Ok(overlay) => manager.set(overlay, (seq > 0).then_some(seq)),
+                Err(error) => eprintln!("varde: title-set: {error}"),
+            }
+        }
+    });
+    let clear = gio::SimpleAction::new("title-clear", Some(parameter));
+    clear.connect_activate({
+        let manager = manager.clone();
+        move |_, parameter| {
+            if let Some((seq, id)) = parameter.and_then(|value| value.get::<(u64, String)>()) {
+                manager.clear(&id, (seq > 0).then_some(seq));
+            }
+        }
+    });
+    app.add_action(&set);
+    app.add_action(&clear);
 }
 
 #[derive(Default)]

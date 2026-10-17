@@ -108,6 +108,15 @@ after that delay. Items that do not fit collapse into `+N more`, except pinned
 ones; hover for the full list. `--seq N` makes Varde ignore a set or clear that
 arrives after a newer one for the same ID.
 
+Starting the `varde` client costs about 15 ms, mostly loading GTK. Callers that
+need lower latency can activate the `title-set` or `title-clear` application
+action directly; the parameter is `(seq, json-or-id)`, with seq 0 meaning none:
+
+```sh
+busctl --user call org.varde.desktop /org/varde/desktop org.gtk.Actions Activate \
+    'sava{sv}' title-set 1 '(ts)' 0 '{"version": 1, "id": "build", "text": "Building"}' 0
+```
+
 ## Launcher actions
 
 Type `>` in the application launcher or run `varde actions` to open the action

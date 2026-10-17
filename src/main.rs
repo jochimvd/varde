@@ -41,7 +41,9 @@ fn main() -> glib::ExitCode {
 
     app.connect_startup({
         let notifications = notifications.clone();
+        let title = title.clone();
         move |app| {
+            title::add_actions(app, &title);
             load_styles();
             if let Some(settings) = gtk::Settings::default() {
                 settings.set_gtk_cursor_blink(true);
