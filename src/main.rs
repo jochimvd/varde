@@ -1,14 +1,14 @@
 mod background;
 mod bar;
-mod command;
+mod input;
 mod launcher;
 mod notifications;
+mod title;
 
 use gio::prelude::*;
 use gtk::glib;
 use std::env;
-
-const APPLICATION_ID: &str = "org.varde.desktop";
+use varde_cli::command;
 
 fn main() -> glib::ExitCode {
     let arguments = env::args_os().collect::<Vec<_>>();
@@ -30,8 +30,8 @@ fn main() -> glib::ExitCode {
 
     let launcher = launcher::Manager::new();
     let notifications = notifications::Manager::new();
-    let application_id =
-        env::var("VARDE_DEV_APP_ID").unwrap_or_else(|_| APPLICATION_ID.to_string());
+    let title = title::Manager::new();
+    let application_id = varde_cli::application_id();
     let app = gtk::Application::builder()
         .application_id(&application_id)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
@@ -39,7 +39,9 @@ fn main() -> glib::ExitCode {
 
     app.connect_startup({
         let notifications = notifications.clone();
+        let title = title.clone();
         move |app| {
+            title::add_actions(app, &title);
             load_styles();
             if let Some(settings) = gtk::Settings::default() {
                 settings.set_gtk_cursor_blink(true);
@@ -50,12 +52,15 @@ fn main() -> glib::ExitCode {
     });
     app.connect_activate({
         let notifications = notifications.clone();
-        move |app| bar::show(app, &notifications)
+        let title = title.clone();
+        move |app| bar::show(app, &notifications, &title)
     });
     app.connect_command_line({
         let launcher = launcher.clone();
         let notifications = notifications.clone();
-        move |app, command_line| handle_command_line(app, command_line, &launcher, &notifications)
+        move |app, command_line| {
+            handle_command_line(app, command_line, &launcher, &notifications, &title)
+        }
     });
     app.run()
 }
@@ -65,6 +70,7 @@ fn handle_command_line(
     command_line: &gio::ApplicationCommandLine,
     launcher: &std::rc::Rc<launcher::Manager>,
     notifications: &std::rc::Rc<notifications::Manager>,
+    title: &std::rc::Rc<title::Manager>,
 ) -> glib::ExitCode {
     let request = match command::parse(&command_line.arguments()) {
         Ok(request) => request,
@@ -103,12 +109,37 @@ fn handle_command_line(
             notifications.toggle();
         }
         command::Request::ClearNotifications => notifications.clear(),
+        command::Request::TitleSet {
+            seq,
+            json: Some(json),
+        } => return set_title(command_line, title, &json, seq),
+        command::Request::TitleSet { seq, json: None } => {
+            let Some(input) = command_line.stdin() else {
+                command_line.printerr_literal("varde: title input is unavailable\n");
+                return 2.into();
+            };
+            // The client waits for its command line object to be released,
+            // so holding it keeps the exit status open until the input is read.
+            let command_line = command_line.clone();
+            let title = title.clone();
+            glib::spawn_future_local(async move {
+                let status = match input::read_all(input).await {
+                    Ok(json) => set_title(&command_line, &title, &json, seq),
+                    Err(error) => {
+                        command_line.printerr_literal(&format!("varde: {error}\n"));
+                        2.into()
+                    }
+                };
+                command_line.set_exit_status(i32::from(status));
+            });
+        }
+        command::Request::TitleClear { seq, id } => title.clear(&id, seq),
         command::Request::Dmenu { prompt } => {
             notifications.close();
             let result = command_line
                 .stdin()
                 .ok_or_else(|| "selector input is unavailable".to_string())
-                .and_then(|input| launcher.run_dmenu(app, command::read_lines(input), &prompt));
+                .and_then(|input| launcher.run_dmenu(app, input::read_lines(input), &prompt));
             return match result {
                 Ok(Some(selected)) => {
                     command_line.print_literal(&format!("{selected}\n"));
@@ -123,6 +154,24 @@ fn handle_command_line(
         }
     }
     0.into()
+}
+
+fn set_title(
+    command_line: &gio::ApplicationCommandLine,
+    title: &std::rc::Rc<title::Manager>,
+    json: &str,
+    seq: Option<u64>,
+) -> glib::ExitCode {
+    match title::parse(json) {
+        Ok(overlay) => {
+            title.set(overlay, seq);
+            0.into()
+        }
+        Err(error) => {
+            command_line.printerr_literal(&format!("varde: {error}\n"));
+            2.into()
+        }
+    }
 }
 
 fn load_styles() {

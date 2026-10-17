@@ -54,7 +54,7 @@ fi
 
 session_pids() {
     local pid
-    for pid in $(pgrep -x varde || true); do
+    for pid in $(pgrep -x varde-shell || true); do
         if tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null |
             grep -qxF "VARDE_DEV_APP_ID=$VARDE_DEV_APP_ID"; then
             printf '%s\n' "$pid"

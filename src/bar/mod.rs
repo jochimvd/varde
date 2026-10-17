@@ -55,7 +55,11 @@ impl HoverIntent {
     }
 }
 
-pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notifications::Manager>) {
+pub fn show(
+    app: &gtk::Application,
+    notifications: &std::rc::Rc<crate::notifications::Manager>,
+    title: &std::rc::Rc<crate::title::Manager>,
+) {
     if app
         .windows()
         .iter()
@@ -92,7 +96,7 @@ pub fn show(app: &gtk::Application, notifications: &std::rc::Rc<crate::notificat
     right.set_spacing(MODULE_GAP);
     notifications.set_center_anchor(&window);
 
-    left.append(&hyprland::widget());
+    left.append(&hyprland::widget(title));
 
     let system = system::widgets();
     let services = services::widgets();

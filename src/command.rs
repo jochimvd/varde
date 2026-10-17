@@ -1,5 +1,3 @@
-use gio::prelude::*;
-
 pub const HELP: &str = "\
 Varde desktop shell
 
@@ -11,6 +9,7 @@ Commands:
   actions        Toggle the action menu
   clipboard      Toggle the clipboard launcher
   notifications  Manage notifications
+  title          Write to the bar's title
   dmenu          Select a line read from standard input
   help           Print help for a command
 
@@ -33,6 +32,18 @@ Usage: varde clipboard";
 const NOTIFICATIONS_HELP: &str = "Manage notifications
 
 Usage: varde notifications [clear]";
+const TITLE_HELP: &str = "Write to the bar's title
+
+Usage: varde title set [--seq <N>] [JSON]
+       varde title clear [--seq <N>] <ID>
+
+Without JSON, set reads it from standard input. The most recently set title is
+shown until it is cleared or its ttl_ms expires. A --seq lower than or equal to
+one already applied to the same ID is ignored.
+
+JSON: {\"version\": 1, \"id\": \"...\", \"text\": \"...\", \"icon\": \"...\",
+       \"ttl_ms\": 0, \"items_delay_ms\": 0,
+       \"items\": [{\"key\": \"...\", \"label\": \"...\", \"pinned\": false}]}";
 const DMENU_HELP: &str = "Select a line read from standard input
 
 Usage: varde dmenu [OPTIONS]
@@ -50,7 +61,17 @@ pub enum Request {
     Actions,
     Notifications,
     ClearNotifications,
-    Dmenu { prompt: String },
+    Dmenu {
+        prompt: String,
+    },
+    TitleSet {
+        seq: Option<u64>,
+        json: Option<String>,
+    },
+    TitleClear {
+        seq: Option<u64>,
+        id: String,
+    },
 }
 
 pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
@@ -82,6 +103,7 @@ pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
         [help_command, command] if help_command == "help" => help(command),
         [command, option] if option == "-h" || option == "--help" => help(command),
         [command, options @ ..] if command == "dmenu" => parse_dmenu(options),
+        [command, options @ ..] if command == "title" => parse_title(options),
         [command, argument, ..]
             if matches!(
                 command.as_str(),
@@ -103,6 +125,7 @@ fn help(command: &str) -> Result<Request, String> {
         "clipboard" => Ok(Request::Help(CLIPBOARD_HELP)),
         "notifications" => Ok(Request::Help(NOTIFICATIONS_HELP)),
         "dmenu" => Ok(Request::Help(DMENU_HELP)),
+        "title" => Ok(Request::Help(TITLE_HELP)),
         _ => Err(format!("unknown command '{command}'")),
     }
 }
@@ -126,24 +149,38 @@ fn parse_dmenu(options: &[String]) -> Result<Request, String> {
     Ok(Request::Dmenu { prompt })
 }
 
-pub async fn read_lines(input: gio::InputStream) -> Result<Vec<String>, String> {
-    let mut bytes = Vec::new();
-    loop {
-        let chunk = input
-            .read_bytes_future(64 * 1024, gtk::glib::Priority::DEFAULT)
-            .await
-            .map_err(|error| format!("could not read selector input: {error}"))?;
-        if chunk.is_empty() {
-            break;
-        }
-        bytes.extend_from_slice(&chunk);
+fn parse_title(options: &[String]) -> Result<Request, String> {
+    let Some((action, mut options)) = options.split_first() else {
+        return Ok(Request::Help(TITLE_HELP));
+    };
+    if action == "-h" || action == "--help" {
+        return Ok(Request::Help(TITLE_HELP));
     }
-    parse_lines(bytes)
-}
-
-fn parse_lines(bytes: Vec<u8>) -> Result<Vec<String>, String> {
-    let input = String::from_utf8(bytes).map_err(|_| "selector input must be UTF-8".to_string())?;
-    Ok(input.lines().map(str::to_owned).collect())
+    let mut seq = None;
+    if let [flag, value, rest @ ..] = options
+        && flag == "--seq"
+    {
+        seq = Some(
+            value
+                .parse()
+                .map_err(|_| format!("invalid sequence number '{value}'"))?,
+        );
+        options = rest;
+    }
+    match (action.as_str(), options) {
+        ("set", []) => Ok(Request::TitleSet { seq, json: None }),
+        ("set", [json]) => Ok(Request::TitleSet {
+            seq,
+            json: Some(json.clone()),
+        }),
+        ("clear", [id]) => Ok(Request::TitleClear {
+            seq,
+            id: id.clone(),
+        }),
+        ("set" | "clear", [.., argument]) => Err(format!("unexpected argument '{argument}'")),
+        ("clear", []) => Err("clear requires an ID".into()),
+        (action, _) => Err(format!("unknown title action '{action}'")),
+    }
 }
 
 #[cfg(test)]
@@ -203,6 +240,41 @@ mod tests {
     }
 
     #[test]
+    fn parses_title_actions() {
+        assert!(matches!(
+            parse(&args(&["title", "set"])),
+            Ok(Request::TitleSet {
+                seq: None,
+                json: None
+            })
+        ));
+        assert!(matches!(
+            parse(&args(&["title", "set", "--seq", "7", "{}"])),
+            Ok(Request::TitleSet { seq: Some(7), json: Some(json) }) if json == "{}"
+        ));
+        assert!(matches!(
+            parse(&args(&["title", "clear", "submap"])),
+            Ok(Request::TitleClear { seq: None, id }) if id == "submap"
+        ));
+        assert!(matches!(
+            parse(&args(&["title", "clear", "--seq", "3", "submap"])),
+            Ok(Request::TitleClear { seq: Some(3), id }) if id == "submap"
+        ));
+        assert!(matches!(
+            parse(&args(&["title", "--help"])),
+            Ok(Request::Help(TITLE_HELP))
+        ));
+        for invalid in [
+            &["title", "clear"][..],
+            &["title", "clear", "a", "b"],
+            &["title", "set", "--seq", "x", "{}"],
+            &["title", "show"],
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "accepted {invalid:?}");
+        }
+    }
+
+    #[test]
     fn rejects_unknown_arguments() {
         assert!(matches!(
             parse(&args(&["unknown"])),
@@ -217,15 +289,5 @@ mod tests {
             Err(error) if error == "unknown option '--bad'"
         ));
         assert!(parse(&args(&["help", "unknown"])).is_err());
-    }
-
-    #[test]
-    fn preserves_duplicate_and_empty_selector_lines() {
-        assert_eq!(
-            parse_lines(b"One\n\nOne\n".to_vec()).unwrap(),
-            ["One", "", "One"]
-        );
-        assert!(parse_lines(Vec::new()).unwrap().is_empty());
-        assert!(parse_lines(vec![0xff]).is_err());
     }
 }

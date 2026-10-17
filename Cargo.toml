@@ -3,6 +3,18 @@ name = "varde"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "varde_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "varde"
+path = "src/client.rs"
+
+[[bin]]
+name = "varde-shell"
+path = "src/main.rs"
+
 [dependencies]
 async-channel = "2"
 gio = { version = "0.21", features = ["v2_80"] }
