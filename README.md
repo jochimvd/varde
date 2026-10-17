@@ -45,6 +45,10 @@ Optional bar actions use `pavucontrol`, `impala`, `bluetui`, `btop`, and
 cargo install --path . --locked
 ```
 
+This installs two programs: `varde-shell`, the GTK shell, and `varde`, a small
+client that forwards commands to the running shell without loading GTK.
+`varde start` runs `varde-shell`, as does any command when no shell is running.
+
 <details>
 <summary>Run Varde as a systemd user service</summary>
 
@@ -108,9 +112,9 @@ after that delay. Items that do not fit collapse into `+N more`, except pinned
 ones; hover for the full list. `--seq N` makes Varde ignore a set or clear that
 arrives after a newer one for the same ID.
 
-Starting the `varde` client costs about 15 ms, mostly loading GTK. Callers that
-need lower latency can activate the `title-set` or `title-clear` application
-action directly; the parameter is `(seq, json-or-id)`, with seq 0 meaning none:
+Callers can also activate the `title-set` or `title-clear` application action
+over D-Bus directly; the parameter is `(seq, json-or-id)`, with seq 0 meaning
+none:
 
 ```sh
 busctl --user call org.varde.desktop /org/varde/desktop org.gtk.Actions Activate \

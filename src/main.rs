@@ -1,6 +1,6 @@
 mod background;
 mod bar;
-mod command;
+mod input;
 mod launcher;
 mod notifications;
 mod title;
@@ -8,8 +8,7 @@ mod title;
 use gio::prelude::*;
 use gtk::glib;
 use std::env;
-
-const APPLICATION_ID: &str = "org.varde.desktop";
+use varde_cli::command;
 
 fn main() -> glib::ExitCode {
     let arguments = env::args_os().collect::<Vec<_>>();
@@ -32,8 +31,7 @@ fn main() -> glib::ExitCode {
     let launcher = launcher::Manager::new();
     let notifications = notifications::Manager::new();
     let title = title::Manager::new();
-    let application_id =
-        env::var("VARDE_DEV_APP_ID").unwrap_or_else(|_| APPLICATION_ID.to_string());
+    let application_id = varde_cli::application_id();
     let app = gtk::Application::builder()
         .application_id(&application_id)
         .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
@@ -125,7 +123,7 @@ fn handle_command_line(
             let command_line = command_line.clone();
             let title = title.clone();
             glib::spawn_future_local(async move {
-                let status = match command::read_all(input).await {
+                let status = match input::read_all(input).await {
                     Ok(json) => set_title(&command_line, &title, &json, seq),
                     Err(error) => {
                         command_line.printerr_literal(&format!("varde: {error}\n"));
@@ -141,7 +139,7 @@ fn handle_command_line(
             let result = command_line
                 .stdin()
                 .ok_or_else(|| "selector input is unavailable".to_string())
-                .and_then(|input| launcher.run_dmenu(app, command::read_lines(input), &prompt));
+                .and_then(|input| launcher.run_dmenu(app, input::read_lines(input), &prompt));
             return match result {
                 Ok(Some(selected)) => {
                     command_line.print_literal(&format!("{selected}\n"));
