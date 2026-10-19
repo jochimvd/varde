@@ -27,7 +27,8 @@ window.bar {
     background: @surface_color;
 }
 
-window.bar label {
+window.bar label,
+window.notifications label {
     padding-top: 1px;
 }
 
@@ -116,18 +117,21 @@ button {
 }
 
 popover.bar-popover,
-popover.notifications {
+window.notifications {
     font-family: 'JetBrainsMono Nerd Font';
     font-size: 14px;
     color: @primary_color;
     background: transparent;
 }
 
-popover.bar-popover > contents,
-popover.notifications > contents {
+popover.bar-popover > contents {
     padding: 0;
     border: none;
     box-shadow: none;
+    background: transparent;
+}
+
+window.notification-backdrop {
     background: transparent;
 }
 
@@ -703,6 +707,6 @@ window.notification-popups {
     color: @critical_color;
 }
 
-popover.notifications scrollbar {
+window.notifications scrollbar {
     opacity: 0;
 }

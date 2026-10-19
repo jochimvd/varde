@@ -112,12 +112,12 @@ impl Manager {
     }
 
     pub fn close(&self) {
+        if !self.center_open() {
+            return;
+        }
         if let Some(center) = self.center.borrow().as_ref() {
             center.hide();
         }
-    }
-
-    pub(super) fn center_closed(&self) {
         if let Some(bell) = self.bell.borrow().as_ref() {
             bell.update(&self.snapshot.borrow(), false);
         }

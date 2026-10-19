@@ -3,13 +3,13 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use gtk::prelude::*;
+use gtk::{gdk, prelude::*};
 
 use crate::notifications::{Manager, model::Group, state::Urgency, view::common::application};
 
 use super::{
     CHEVRON_DOWN, CHEVRON_UP, REVEAL_DURATION, Seen,
-    row::{Pointer, RowView, fresh_dot, within},
+    row::{RowView, fresh_dot},
 };
 
 const ICON_SIZE: i32 = 20;
@@ -17,7 +17,6 @@ const ICON_SIZE: i32 = 20;
 pub(super) struct GroupView {
     pub(super) container: gtk::Box,
     pub(super) key: String,
-    header: gtk::Box,
     icon: gtk::Stack,
     image: gtk::Image,
     name: gtk::Label,
@@ -27,19 +26,13 @@ pub(super) struct GroupView {
     list: gtk::Box,
     revealer: gtk::Revealer,
     rows: RefCell<Vec<RowView>>,
-    notifications: RefCell<Vec<u32>>,
-    on_expansion: Rc<dyn Fn()>,
+    notifications: Rc<RefCell<Vec<u32>>>,
     manager: Weak<Manager>,
     interactive: bool,
 }
 
 impl GroupView {
-    pub(super) fn new(
-        key: &str,
-        manager: &Weak<Manager>,
-        on_expansion: &Rc<dyn Fn()>,
-        interactive: bool,
-    ) -> Self {
+    pub(super) fn new(key: &str, manager: &Weak<Manager>, interactive: bool) -> Self {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
@@ -103,7 +96,6 @@ impl GroupView {
             let chevron = chevron.clone();
             let fresh = fresh.clone();
             let has_fresh = Rc::clone(&has_fresh);
-            let on_expansion = Rc::clone(on_expansion);
             move |_| {
                 let Some(container) = container.upgrade() else {
                     return;
@@ -117,9 +109,25 @@ impl GroupView {
                 } else {
                     container.add_css_class("collapsed");
                 }
-                on_expansion();
             }
         });
+
+        let notifications = Rc::new(RefCell::new(Vec::new()));
+        if interactive {
+            let dismiss = gtk::GestureClick::builder()
+                .button(gdk::BUTTON_SECONDARY)
+                .build();
+            dismiss.connect_released({
+                let manager = manager.clone();
+                let notifications = Rc::clone(&notifications);
+                move |_, _, _, _| {
+                    if let Some(manager) = manager.upgrade() {
+                        manager.dismiss_group(notifications.borrow().clone());
+                    }
+                }
+            });
+            header.add_controller(dismiss);
+        }
 
         container.append(&header);
         container.append(&revealer);
@@ -127,7 +135,6 @@ impl GroupView {
         Self {
             container,
             key: key.to_string(),
-            header,
             icon,
             image,
             name,
@@ -137,25 +144,10 @@ impl GroupView {
             list,
             revealer,
             rows: RefCell::new(Vec::new()),
-            notifications: RefCell::new(Vec::new()),
-            on_expansion: Rc::clone(on_expansion),
+            notifications,
             manager: manager.clone(),
             interactive,
         }
-    }
-
-    pub(super) fn notifications(&self) -> Vec<u32> {
-        self.notifications.borrow().clone()
-    }
-
-    pub(super) fn pointer_target(&self, picked: &gtk::Widget) -> Option<Pointer> {
-        if within(picked, &self.header) {
-            return Some(Pointer::Header(self.key.clone()));
-        }
-        self.rows
-            .borrow()
-            .iter()
-            .find_map(|row| row.pointer_target(picked))
     }
 
     pub(super) fn update(&self, group: &Group, seen: &Seen) {
@@ -187,7 +179,7 @@ impl GroupView {
         for notification in &group.notifications {
             let row = match stale.iter().position(|row| row.id() == notification.id) {
                 Some(index) => stale.remove(index),
-                None => RowView::new(&self.manager, &self.on_expansion, self.interactive),
+                None => RowView::new(&self.manager, self.interactive),
             };
             let unseen = !seen.contains(&(notification.id, notification.revision));
             fresh |= unseen;
@@ -228,12 +220,6 @@ impl GroupView {
     pub(super) fn refresh_times(&self) {
         for row in self.rows.borrow().iter() {
             row.refresh_time();
-        }
-    }
-
-    pub(super) fn clear_hover(&self) {
-        for row in self.rows.borrow().iter() {
-            row.clear_hover();
         }
     }
 }

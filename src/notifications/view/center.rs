@@ -5,18 +5,20 @@ use std::{
 };
 
 use gtk::{gdk, glib, prelude::*};
+use gtk4_layer_shell::{Edge, KeyboardMode, Layer, LayerShell};
 
 mod group;
 mod row;
 
 use group::GroupView;
-use row::Pointer;
 
 use super::{
     super::{Manager, model::Snapshot},
-    common::{activation_token, message},
+    common::message,
 };
 
+const CENTER_NAME: &str = "varde-notification-center";
+const BACKDROP_NAME: &str = "varde-notification-backdrop";
 const PANEL_WIDTH: i32 = 460;
 const PANEL_OFFSET: i32 = 18;
 const MIN_CONTENT_HEIGHT: i32 = 98;
@@ -33,7 +35,9 @@ pub(super) const CHEVRON_UP: &str = "\u{f0143}";
 type Seen = HashSet<(u32, u64)>;
 
 pub(in crate::notifications) struct Center {
-    popover: gtk::Popover,
+    window: gtk::ApplicationWindow,
+    backdrop: gtk::ApplicationWindow,
+    anchor: gtk::ApplicationWindow,
     scroll: gtk::ScrolledWindow,
     list: gtk::Box,
     stack: gtk::Stack,
@@ -42,30 +46,72 @@ pub(in crate::notifications) struct Center {
     groups: Rc<RefCell<Vec<GroupView>>>,
     seen: RefCell<Seen>,
     ticking: Rc<Cell<bool>>,
-    on_expansion: Rc<dyn Fn()>,
     manager: Weak<Manager>,
     interactive: bool,
 }
 
 impl Center {
     pub fn new(anchor: &gtk::ApplicationWindow, manager: &Rc<Manager>, interactive: bool) -> Self {
-        let popover = gtk::Popover::builder()
-            .autohide(true)
-            .has_arrow(false)
-            .position(gtk::PositionType::Bottom)
-            .halign(gtk::Align::End)
+        let app = anchor
+            .application()
+            .expect("the bar belongs to the application");
+        let backdrop = gtk::ApplicationWindow::builder()
+            .application(&app)
+            .name(BACKDROP_NAME)
             .build();
-        popover.add_css_class("notifications");
-        popover.set_offset(-PANEL_OFFSET, PANEL_OFFSET);
-        popover.set_parent(anchor);
-        popover.connect_closed({
+        backdrop.add_css_class("notification-backdrop");
+        backdrop.init_layer_shell();
+        backdrop.set_namespace(Some(BACKDROP_NAME));
+        backdrop.set_layer(Layer::Overlay);
+        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+            backdrop.set_anchor(edge, true);
+        }
+        backdrop.set_exclusive_zone(-1);
+        backdrop.set_keyboard_mode(KeyboardMode::None);
+        let outside = gtk::GestureClick::builder().button(0).build();
+        outside.connect_released({
             let manager = Rc::downgrade(manager);
-            move |_| {
+            move |_, _, _, _| {
                 if let Some(manager) = manager.upgrade() {
-                    manager.center_closed();
+                    manager.close();
                 }
             }
         });
+        // GTK skips rendering a window with nothing to draw, and a surface
+        // without a buffer never maps; an empty drawing still renders one.
+        let area = gtk::DrawingArea::builder()
+            .hexpand(true)
+            .vexpand(true)
+            .build();
+        area.set_draw_func(|_, _, _, _| {});
+        area.add_controller(outside);
+        backdrop.set_child(Some(&area));
+
+        let window = gtk::ApplicationWindow::builder()
+            .application(&app)
+            .name(CENTER_NAME)
+            .resizable(false)
+            .build();
+        window.add_css_class("notifications");
+        window.init_layer_shell();
+        window.set_namespace(Some(CENTER_NAME));
+        window.set_layer(Layer::Overlay);
+        window.set_anchor(Edge::Top, true);
+        window.set_anchor(Edge::Right, true);
+        window.set_margin(Edge::Top, PANEL_OFFSET);
+        window.set_margin(Edge::Right, PANEL_OFFSET);
+        window.set_keyboard_mode(KeyboardMode::OnDemand);
+        for window in [&window, &backdrop] {
+            window.connect_close_request({
+                let manager = Rc::downgrade(manager);
+                move |_| {
+                    if let Some(manager) = manager.upgrade() {
+                        manager.close();
+                    }
+                    glib::Propagation::Stop
+                }
+            });
+        }
 
         let title = gtk::Label::builder()
             .label("Notifications")
@@ -133,7 +179,7 @@ impl Center {
         panel.add_css_class("notification-center");
         panel.append(&header);
         panel.append(&stack);
-        popover.set_child(Some(&panel));
+        window.set_child(Some(&panel));
 
         let keys = gtk::EventControllerKey::new();
         keys.connect_key_pressed({
@@ -148,21 +194,18 @@ impl Center {
                 glib::Propagation::Stop
             }
         });
-        popover.add_controller(keys);
+        window.add_controller(keys);
 
-        let groups = Rc::new(RefCell::new(Vec::new()));
-        if interactive {
-            install_pointer_actions(&popover, &groups, manager);
-        }
         Self {
-            on_expansion: expansion_tracker(&popover, &groups),
-            popover,
+            window,
+            backdrop,
+            anchor: anchor.clone(),
             scroll,
             list,
             stack,
             dnd,
             clear,
-            groups,
+            groups: Rc::new(RefCell::new(Vec::new())),
             seen: RefCell::new(Seen::new()),
             ticking: Rc::new(Cell::new(false)),
             manager: Rc::downgrade(manager),
@@ -171,7 +214,7 @@ impl Center {
     }
 
     pub fn update(&self, snapshot: &Snapshot) {
-        self.render(snapshot, !self.popover.is_visible());
+        self.render(snapshot, !self.is_visible());
     }
 
     pub fn show(&self, snapshot: &Snapshot) {
@@ -185,20 +228,31 @@ impl Center {
         );
         self.render(snapshot, true);
         self.scroll.vadjustment().set_value(0.0);
-        self.popover.popup();
+        // On the bar's monitor, with the backdrop mapped first so the panel
+        // stacks above it.
+        let monitor = self
+            .anchor
+            .surface()
+            .and_then(|surface| surface.display().monitor_at_surface(&surface));
+        for window in [&self.backdrop, &self.window] {
+            window.set_monitor(monitor.as_ref());
+            window.present();
+        }
         self.refresh_after_layout();
         self.refresh_times_while_open();
     }
 
     pub fn hide(&self) {
-        for group in self.groups.borrow().iter() {
-            group.clear_hover();
-        }
-        self.popover.popdown();
+        self.window.set_visible(false);
+        // Hyprland keeps keyboard focus on a layer's surface across remaps
+        // without announcing it again, while GTK drops it on hide; a fresh
+        // surface gets the focus announced.
+        WidgetExt::unrealize(&self.window);
+        self.backdrop.set_visible(false);
     }
 
     pub fn is_visible(&self) -> bool {
-        self.popover.is_visible()
+        self.window.is_visible()
     }
 
     fn render(&self, snapshot: &Snapshot, reset_order: bool) {
@@ -226,7 +280,7 @@ impl Center {
                 .expect("the group order only holds keys of the current snapshot");
             let view = match stale.iter().position(|view| view.key == *key) {
                 Some(index) => stale.remove(index),
-                None => GroupView::new(key, &self.manager, &self.on_expansion, self.interactive),
+                None => GroupView::new(key, &self.manager, self.interactive),
             };
             view.update(group, &self.seen.borrow());
             if view.container.parent().is_none() {
@@ -260,8 +314,7 @@ impl Center {
         self.clear
             .set_sensitive(snapshot.available && snapshot.count > 0);
 
-        if self.popover.is_visible() {
-            self.popover.present();
+        if self.is_visible() {
             self.refresh_after_layout();
         }
     }
@@ -271,15 +324,15 @@ impl Center {
         if self.ticking.replace(true) {
             return;
         }
-        let popover = self.popover.downgrade();
+        let window = self.window.downgrade();
         let groups = Rc::downgrade(&self.groups);
         let ticking = Rc::clone(&self.ticking);
         glib::timeout_add_seconds_local(TIME_REFRESH_SECONDS, move || {
-            let (Some(popover), Some(groups)) = (popover.upgrade(), groups.upgrade()) else {
+            let (Some(window), Some(groups)) = (window.upgrade(), groups.upgrade()) else {
                 ticking.set(false);
                 return glib::ControlFlow::Break;
             };
-            if !popover.is_visible() {
+            if !window.is_visible() {
                 ticking.set(false);
                 return glib::ControlFlow::Break;
             }
@@ -290,8 +343,8 @@ impl Center {
         });
     }
 
-    /// Hover state and ellipsization both depend on the rendered layout, which
-    /// only settles on the frame after the one this render is part of.
+    /// Ellipsization depends on the rendered layout, which only settles on the
+    /// frame after the one this render is part of.
     fn refresh_after_layout(&self) {
         let groups = Rc::downgrade(&self.groups);
         let laid_out = Cell::new(false);
@@ -307,115 +360,6 @@ impl Center {
             glib::ControlFlow::Break
         });
     }
-}
-
-/// Activates and dismisses notifications from the event position instead of
-/// from the widget the click was delivered to. GTK keeps pointing a motionless
-/// pointer at the widget it entered, so a row that moves under the pointer -
-/// because the row above it was dismissed - would otherwise swallow the first
-/// click while GTK catches up.
-fn install_pointer_actions(
-    popover: &gtk::Popover,
-    groups: &Rc<RefCell<Vec<GroupView>>>,
-    manager: &Rc<Manager>,
-) {
-    // Bubble phase: closing the center from the capture phase would tear the
-    // popover down while GTK is still delivering the event, and it stays up.
-    let buttons = gtk::EventControllerLegacy::new();
-    buttons.connect_event({
-        let popover = popover.downgrade();
-        let groups = Rc::downgrade(groups);
-        let manager = Rc::downgrade(manager);
-        let pressed = RefCell::new(None);
-        move |_, event| {
-            let Some(event) = event.downcast_ref::<gdk::ButtonEvent>() else {
-                return glib::Propagation::Proceed;
-            };
-            let press = match event.event_type() {
-                gdk::EventType::ButtonPress => true,
-                gdk::EventType::ButtonRelease => false,
-                _ => return glib::Propagation::Proceed,
-            };
-            let (Some(popover), Some(groups), Some(manager), Some((x, y))) = (
-                popover.upgrade(),
-                groups.upgrade(),
-                manager.upgrade(),
-                event.position(),
-            ) else {
-                return glib::Propagation::Proceed;
-            };
-            let button = event.button();
-            let target = popover
-                .pick(x, y, gtk::PickFlags::DEFAULT)
-                .and_then(|picked| {
-                    groups
-                        .borrow()
-                        .iter()
-                        .find_map(|group| group.pointer_target(&picked))
-                });
-            if press {
-                pressed.replace(Some((button, target)));
-                return glib::Propagation::Proceed;
-            }
-            if !pressed
-                .take()
-                .is_some_and(|(pressed_button, pressed_target)| {
-                    pressed_button == button && pressed_target == target
-                })
-            {
-                return glib::Propagation::Proceed;
-            }
-            match (button, target) {
-                (gdk::BUTTON_SECONDARY, Some(Pointer::Header(key))) => {
-                    if let Some(group) = groups.borrow().iter().find(|group| group.key == key) {
-                        manager.dismiss_group(group.notifications());
-                    }
-                }
-                (gdk::BUTTON_SECONDARY, Some(Pointer::Row { id, .. })) => manager.dismiss(id),
-                (
-                    gdk::BUTTON_PRIMARY,
-                    Some(Pointer::Row {
-                        id,
-                        activates: true,
-                    }),
-                ) => {
-                    manager.invoke_action(id, "default", activation_token(&popover));
-                    manager.close();
-                }
-                _ => {}
-            }
-            glib::Propagation::Proceed
-        }
-    });
-    popover.add_controller(buttons);
-}
-
-/// Follows an expansion that a group or a notification just started. A popover
-/// only resizes its surface when it is presented, so it has to be presented for
-/// every frame of the animation; the rows it moved settle once it ends.
-fn expansion_tracker(popover: &gtk::Popover, groups: &Rc<RefCell<Vec<GroupView>>>) -> Rc<dyn Fn()> {
-    let popover = popover.downgrade();
-    let groups = Rc::downgrade(groups);
-    Rc::new(move || {
-        let (Some(popover), Some(groups)) = (popover.upgrade(), groups.upgrade()) else {
-            return;
-        };
-        let Some(clock) = popover.frame_clock() else {
-            return;
-        };
-        // The reveal duration plus a frame, so the settled size is presented.
-        let deadline = clock.frame_time() + i64::from(REVEAL_DURATION + 20) * 1000;
-        popover.add_tick_callback(move |popover, clock| {
-            popover.present();
-            if clock.frame_time() < deadline {
-                return glib::ControlFlow::Continue;
-            }
-            for group in groups.borrow().iter() {
-                group.refresh();
-            }
-            glib::ControlFlow::Break
-        });
-    })
 }
 
 fn control_button(icon: &str, tooltip: &str) -> gtk::Button {
