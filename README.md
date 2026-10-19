@@ -95,6 +95,10 @@ varde notifications dnd
 `invoke`, `actions`, and `dismiss` act on the newest notification with a popup
 on screen, else the newest one, so they suit keybindings.
 
+Notifications and Do Not Disturb survive a restart: Varde saves them to
+`~/.local/state/varde/notifications.json` when it stops normally and restores
+them to the notification center on the next start. A crash loses them.
+
 ```sh
 printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."
 ```

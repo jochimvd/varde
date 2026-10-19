@@ -72,7 +72,9 @@ scripts/dev-restart
 scripts/dev-restart --no-build
 ```
 
-Restarting Varde clears shell-owned state, including stored notifications.
+Varde saves notifications when it stops and restores them on the next start.
+Each session keeps them in `$XDG_RUNTIME_DIR/varde-dev/<session>/state`, apart
+from the live shell; delete that directory to start empty.
 
 ## Drive the session
 

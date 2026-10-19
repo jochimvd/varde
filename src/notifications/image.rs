@@ -1,18 +1,48 @@
 use std::{path::PathBuf, sync::Arc};
 
 use gdk_pixbuf::{Colorspace, InterpType, Pixbuf, glib};
+use serde::{Deserialize, Serialize};
 
 pub(super) const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_IMAGE_DIMENSION: i32 = 4096;
 pub(super) const MAX_IMAGE_AREA: usize = 16_777_216;
 const THUMBNAIL_SIZE: i32 = 128;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(into = "SavedThumbnail", try_from = "SavedThumbnail")]
 pub(super) struct Thumbnail {
     pub width: i32,
     pub height: i32,
     pub rowstride: usize,
     pub bytes: Arc<[u8]>,
+}
+
+/// Tight RGBA pixels as base64, checked again on load like any other image.
+#[derive(Serialize, Deserialize)]
+struct SavedThumbnail {
+    width: i32,
+    height: i32,
+    rgba: String,
+}
+
+impl From<Thumbnail> for SavedThumbnail {
+    fn from(thumbnail: Thumbnail) -> Self {
+        Self {
+            width: thumbnail.width,
+            height: thumbnail.height,
+            rgba: glib::base64_encode(&thumbnail.bytes).into(),
+        }
+    }
+}
+
+impl TryFrom<SavedThumbnail> for Thumbnail {
+    type Error = &'static str;
+
+    fn try_from(saved: SavedThumbnail) -> Result<Self, Self::Error> {
+        let rowstride = saved.width.checked_mul(4).ok_or("invalid thumbnail")?;
+        let bytes = glib::base64_decode(&saved.rgba);
+        from_raw(saved.width, saved.height, rowstride, true, 8, 4, bytes).ok_or("invalid thumbnail")
+    }
 }
 
 pub(super) fn from_raw(

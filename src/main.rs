@@ -62,7 +62,20 @@ fn main() -> glib::ExitCode {
             handle_command_line(app, command_line, &launcher, &notifications, &title)
         }
     });
-    app.run()
+    // systemd and dev-restart stop the shell with SIGTERM; quitting through
+    // the main loop lets the notifications be saved for the next start.
+    for signal in [libc::SIGTERM, libc::SIGINT] {
+        glib::unix_signal_add_local(signal, {
+            let app = app.clone();
+            move || {
+                app.quit();
+                glib::ControlFlow::Break
+            }
+        });
+    }
+    let status = app.run();
+    notifications.save();
+    status
 }
 
 fn handle_command_line(

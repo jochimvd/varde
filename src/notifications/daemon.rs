@@ -15,7 +15,7 @@ use super::{
     image::{self, Thumbnail},
     model::{self, Snapshot},
     sound::{Player, Sound},
-    state::{Action, CloseReason, Incoming, Notification, Picture, Store, Urgency},
+    state::{Action, CloseReason, Incoming, Notification, Picture, Saved, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -48,6 +48,13 @@ impl Control {
             .expect("notification store poisoned")
             .latest(matches)
             .map(|notification| (notification.id, notification.actions.clone()))
+    }
+
+    pub fn saved(&self) -> Saved {
+        self.store
+            .lock()
+            .expect("notification store poisoned")
+            .saved()
     }
 
     pub fn toggle_dnd(&self) {
@@ -118,9 +125,9 @@ impl Shared {
     }
 }
 
-pub(super) fn start(changes: async_channel::Sender<()>) -> Option<Control> {
+pub(super) fn start(changes: async_channel::Sender<()>, store: Store) -> Option<Control> {
     let (commands, receiver) = mpsc::channel();
-    let store = Arc::new(Mutex::new(Store::default()));
+    let store = Arc::new(Mutex::new(store));
     let available = Arc::new(AtomicBool::new(false));
     let control = Control {
         commands: commands.clone(),
