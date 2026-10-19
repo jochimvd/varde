@@ -1,11 +1,13 @@
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
+
 use super::image::Thumbnail;
 
 const MAX_NOTIFICATIONS: usize = 100;
 pub(super) const POPUP_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) enum Urgency {
     Low,
     #[default]
@@ -29,19 +31,19 @@ impl PopupTimer {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct Action {
     pub key: String,
     pub label: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) enum Picture {
     Pixels(Thumbnail),
     Themed(String),
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct Notification {
     pub id: u32,
     pub revision: u64,
@@ -104,6 +106,21 @@ pub(super) struct Store {
     popups_paused_at: Option<Instant>,
 }
 
+/// What survives a restart: no transient notifications and no popup state.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(super) struct Saved {
+    next_id: u32,
+    next_revision: u64,
+    dnd: bool,
+    notifications: Vec<SavedNotification>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SavedNotification {
+    notification: Notification,
+    tag: String,
+}
+
 pub(super) struct Received {
     pub id: u32,
     pub replaced: bool,
@@ -111,6 +128,46 @@ pub(super) struct Received {
 }
 
 impl Store {
+    pub fn saved(&self) -> Saved {
+        Saved {
+            next_id: self.next_id,
+            next_revision: self.next_revision,
+            dnd: self.dnd,
+            notifications: self
+                .notifications
+                .iter()
+                .filter(|stored| !stored.transient)
+                .map(|stored| SavedNotification {
+                    notification: stored.notification.clone(),
+                    tag: stored.tag.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Restored notifications return to the center only, since their popups
+    /// were shown before the restart.
+    pub fn restore(saved: Saved) -> Self {
+        Self {
+            next_id: saved.next_id,
+            next_revision: saved.next_revision,
+            notifications: saved
+                .notifications
+                .into_iter()
+                .take(MAX_NOTIFICATIONS)
+                .map(|saved| Stored {
+                    notification: saved.notification,
+                    tag: saved.tag,
+                    transient: false,
+                    popup_deadline: None,
+                    show_popup: false,
+                })
+                .collect(),
+            dnd: saved.dnd,
+            popups_paused_at: None,
+        }
+    }
+
     #[cfg(test)]
     pub fn notify(&mut self, incoming: Incoming) -> u32 {
         self.notify_with_eviction(incoming).id

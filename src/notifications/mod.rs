@@ -2,6 +2,7 @@ mod daemon;
 mod hook;
 mod image;
 mod model;
+mod persist;
 mod sound;
 mod state;
 mod view;
@@ -71,7 +72,7 @@ impl Manager {
     pub fn start(self: &Rc<Self>, app: &gtk::Application) {
         self.popups.replace(Some(Popups::new(app, self)));
         let (changes, views) = async_channel::bounded(1);
-        let Some(daemon) = daemon::start(changes) else {
+        let Some(daemon) = daemon::start(changes, persist::load()) else {
             return;
         };
         crate::background::listen(views, {
@@ -84,6 +85,12 @@ impl Manager {
             }
         });
         self.daemon.replace(Some(daemon));
+    }
+
+    pub fn save(&self) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            persist::save(&daemon.saved());
+        }
     }
 
     pub fn button(self: &Rc<Self>) -> gtk::Button {
