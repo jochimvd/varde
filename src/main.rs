@@ -108,7 +108,19 @@ fn handle_command_line(
             launcher.close();
             notifications.toggle();
         }
+        command::Request::InvokeNotification => {
+            return invoke_notification(app, command_line, launcher, notifications, false);
+        }
+        command::Request::PickNotificationAction => {
+            return invoke_notification(app, command_line, launcher, notifications, true);
+        }
+        command::Request::DismissNotification => {
+            if !notifications.dismiss_latest() {
+                return 1.into();
+            }
+        }
         command::Request::ClearNotifications => notifications.clear(),
+        command::Request::ToggleDnd => notifications.toggle_dnd(),
         command::Request::TitleSet {
             seq,
             json: Some(json),
@@ -154,6 +166,33 @@ fn handle_command_line(
         }
     }
     0.into()
+}
+
+fn invoke_notification(
+    app: &gtk::Application,
+    command_line: &gio::ApplicationCommandLine,
+    launcher: &std::rc::Rc<launcher::Manager>,
+    notifications: &std::rc::Rc<notifications::Manager>,
+    pick: bool,
+) -> glib::ExitCode {
+    let Some(target) = notifications.latest_actionable() else {
+        command_line.printerr_literal("varde: no notification has actions\n");
+        return 1.into();
+    };
+    if !pick && target.has_default() {
+        notifications.invoke(&target, None);
+        return 0.into();
+    }
+    notifications.close();
+    let lines = std::future::ready(Ok(target.labels()));
+    match launcher.run_dmenu(app, lines, "Action") {
+        Ok(Some(label)) if notifications.invoke(&target, Some(&label)) => 0.into(),
+        Ok(_) => 1.into(),
+        Err(error) => {
+            command_line.printerr_literal(&format!("varde: {error}\n"));
+            2.into()
+        }
+    }
 }
 
 fn set_title(

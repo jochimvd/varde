@@ -231,6 +231,20 @@ impl Store {
             .map(|stored| (&stored.notification, stored.show_popup))
     }
 
+    /// The newest matching notification with a popup, else the newest
+    /// matching one, so a lingering critical popup wins over the center.
+    pub fn latest(&self, matches: impl Fn(&Notification) -> bool) -> Option<&Notification> {
+        let mut matching = self
+            .notifications
+            .iter()
+            .filter(|stored| matches(&stored.notification));
+        let newest = matching.clone().next();
+        matching
+            .find(|stored| stored.show_popup)
+            .or(newest)
+            .map(|stored| &stored.notification)
+    }
+
     fn replacement_index(&self, incoming: &Incoming) -> Option<usize> {
         if incoming.replaces_id != 0
             && let Some(index) = self
@@ -326,6 +340,33 @@ mod tests {
         assert_eq!(store.notifications().count(), 2);
         assert_eq!(notification(&store, first).unwrap().0.summary, "updated");
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn latest_prefers_the_newest_popup_then_the_newest_notification() {
+        let now = Instant::now();
+        let mut store = Store::default();
+        let older = store.notify(incoming("older"));
+        let newer = store.notify(incoming("newer"));
+        let latest = |store: &Store| store.latest(|_| true).map(|notification| notification.id);
+        assert_eq!(latest(&store), Some(newer));
+
+        let revision = notification(&store, newer).unwrap().0.revision;
+        store.displayed(newer, revision, now);
+        store.hide_due_popups(now + POPUP_TIMEOUT);
+        assert_eq!(latest(&store), Some(older));
+
+        let revision = notification(&store, older).unwrap().0.revision;
+        store.displayed(older, revision, now);
+        store.hide_due_popups(now + POPUP_TIMEOUT);
+        assert_eq!(latest(&store), Some(newer));
+        assert_eq!(
+            store
+                .latest(|notification| notification.id == older)
+                .map(|notification| notification.id),
+            Some(older)
+        );
+        assert_eq!(Store::default().latest(|_| true), None);
     }
 
     #[test]

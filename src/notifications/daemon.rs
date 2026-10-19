@@ -15,7 +15,7 @@ use super::{
     image::{self, Thumbnail},
     model::{self, Snapshot},
     sound::{Player, Sound},
-    state::{Action, CloseReason, Incoming, Picture, Store, Urgency},
+    state::{Action, CloseReason, Incoming, Notification, Picture, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -40,6 +40,14 @@ impl Control {
             available: self.available.load(Ordering::Relaxed),
             ..model::from_state(&self.store.lock().expect("notification store poisoned"))
         }
+    }
+
+    pub fn latest(&self, matches: impl Fn(&Notification) -> bool) -> Option<(u32, Vec<Action>)> {
+        self.store
+            .lock()
+            .expect("notification store poisoned")
+            .latest(matches)
+            .map(|notification| (notification.id, notification.actions.clone()))
     }
 
     pub fn toggle_dnd(&self) {

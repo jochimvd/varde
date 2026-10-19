@@ -85,8 +85,15 @@ varde launcher
 varde actions
 varde clipboard
 varde notifications
+varde notifications invoke
+varde notifications actions
+varde notifications dismiss
 varde notifications clear
+varde notifications dnd
 ```
+
+`invoke`, `actions`, and `dismiss` act on the newest notification with a popup
+on screen, else the newest one, so they suit keybindings.
 
 ```sh
 printf "Lock\nSuspend\nReboot\nShutdown" | varde dmenu -p "System..."

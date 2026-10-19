@@ -31,7 +31,19 @@ const CLIPBOARD_HELP: &str = "Toggle the clipboard launcher
 Usage: varde clipboard";
 const NOTIFICATIONS_HELP: &str = "Manage notifications
 
-Usage: varde notifications [clear]";
+Usage: varde notifications [COMMAND]
+
+Without a command, toggles the notification center.
+
+Commands:
+  invoke   Run the latest notification's default action, or pick one if it has none
+  actions  Pick an action of the latest notification
+  dismiss  Dismiss the latest notification
+  clear    Dismiss all notifications
+  dnd      Toggle Do Not Disturb
+
+The latest notification is the newest one with a popup on screen, else the
+newest one. invoke and actions skip notifications without actions.";
 const TITLE_HELP: &str = "Write to the bar's title
 
 Usage: varde title set [--seq <N>] [JSON]
@@ -60,7 +72,11 @@ pub enum Request {
     Clipboard,
     Actions,
     Notifications,
+    InvokeNotification,
+    PickNotificationAction,
+    DismissNotification,
     ClearNotifications,
+    ToggleDnd,
     Dmenu {
         prompt: String,
     },
@@ -97,9 +113,15 @@ pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
         [command] if command == "actions" => Ok(Request::Actions),
         [command] if command == "clipboard" => Ok(Request::Clipboard),
         [command] if command == "notifications" => Ok(Request::Notifications),
-        [command, action] if command == "notifications" && action == "clear" => {
-            Ok(Request::ClearNotifications)
-        }
+        [command, action] if command == "notifications" => match action.as_str() {
+            "invoke" => Ok(Request::InvokeNotification),
+            "actions" => Ok(Request::PickNotificationAction),
+            "dismiss" => Ok(Request::DismissNotification),
+            "clear" => Ok(Request::ClearNotifications),
+            "dnd" => Ok(Request::ToggleDnd),
+            "-h" | "--help" => Ok(Request::Help(NOTIFICATIONS_HELP)),
+            action => Err(format!("unknown notifications action '{action}'")),
+        },
         [help_command, command] if help_command == "help" => help(command),
         [command, option] if option == "-h" || option == "--help" => help(command),
         [command, options @ ..] if command == "dmenu" => parse_dmenu(options),
@@ -217,6 +239,24 @@ mod tests {
             parse(&args(&["notifications", "clear"])),
             Ok(Request::ClearNotifications)
         ));
+        assert!(matches!(
+            parse(&args(&["notifications", "invoke"])),
+            Ok(Request::InvokeNotification)
+        ));
+        assert!(matches!(
+            parse(&args(&["notifications", "actions"])),
+            Ok(Request::PickNotificationAction)
+        ));
+        assert!(matches!(
+            parse(&args(&["notifications", "dismiss"])),
+            Ok(Request::DismissNotification)
+        ));
+        assert!(matches!(
+            parse(&args(&["notifications", "dnd"])),
+            Ok(Request::ToggleDnd)
+        ));
+        assert!(parse(&args(&["notifications", "open"])).is_err());
+        assert!(parse(&args(&["notifications", "dismiss", "extra"])).is_err());
     }
 
     #[test]

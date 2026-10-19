@@ -7,9 +7,11 @@ use super::super::model::{Group, Notification};
 use super::super::state::Picture;
 
 pub(super) fn activation_token(widget: &impl IsA<gtk::Widget>) -> Option<String> {
-    widget
-        .as_ref()
-        .display()
+    display_activation_token(&widget.as_ref().display())
+}
+
+pub(in super::super) fn display_activation_token(display: &gdk::Display) -> Option<String> {
+    display
         .app_launch_context()
         .startup_notify_id(None::<&gio::AppInfo>, &[])
         .map(Into::into)
