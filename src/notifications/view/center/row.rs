@@ -3,7 +3,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use gtk::{gdk, graphene, pango, prelude::*};
+use gtk::{gdk, pango, prelude::*};
 
 use crate::notifications::{
     Manager,
@@ -203,7 +203,7 @@ impl RowView {
             return;
         }
 
-        self.clear_hover();
+        set_hover(&self.surface, false);
         if notification.urgency == Urgency::Critical {
             self.container.add_css_class("critical");
         } else {
@@ -258,10 +258,9 @@ impl RowView {
         self.expansion.expand.set_visible(self.named_actions.get());
     }
 
-    /// Applies the state that only the rendered layout can settle: whether the
-    /// pointer rests on this row, and how much of its text is cut off.
+    /// Settles how much of the text is cut off, which only the rendered layout
+    /// can tell.
     pub(super) fn refresh(&self) {
-        self.refresh_hover();
         if self.expansion.expanded.get() {
             return;
         }
@@ -269,18 +268,6 @@ impl RowView {
         self.expansion
             .expand
             .set_visible(self.named_actions.get() || overflows);
-    }
-
-    pub(super) fn clear_hover(&self) {
-        set_hover(&self.surface, false);
-    }
-
-    fn refresh_hover(&self) {
-        let hovered = self.actionable.get()
-            && pointer_position(&self.surface)
-                .and_then(|(x, y)| self.surface.pick(x, y, gtk::PickFlags::DEFAULT))
-                .is_some_and(|picked| !on_control(&picked));
-        set_hover(&self.surface, hovered);
     }
 }
 
@@ -529,20 +516,4 @@ fn set_hover(surface: &gtk::Box, hovered: bool) {
 /// action row still belongs to the notification.
 fn on_control(picked: &gtk::Widget) -> bool {
     picked.ancestor(gtk::Button::static_type()).is_some()
-}
-
-fn pointer_position(widget: &impl IsA<gtk::Widget>) -> Option<(f64, f64)> {
-    let widget = widget.as_ref();
-    let native = widget.native()?;
-    let pointer = native.display().default_seat()?.pointer()?;
-    let (pointer_surface, x, y) = pointer.surface_at_position();
-    if pointer_surface? != native.surface()? {
-        return None;
-    }
-    let (offset_x, offset_y) = native.surface_transform();
-    let point = native.compute_point(
-        widget,
-        &graphene::Point::new((x + offset_x) as f32, (y + offset_y) as f32),
-    )?;
-    Some((f64::from(point.x()), f64::from(point.y())))
 }

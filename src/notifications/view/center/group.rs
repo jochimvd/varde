@@ -222,10 +222,4 @@ impl GroupView {
             row.refresh_time();
         }
     }
-
-    pub(super) fn clear_hover(&self) {
-        for row in self.rows.borrow().iter() {
-            row.clear_hover();
-        }
-    }
 }

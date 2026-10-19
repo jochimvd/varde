@@ -243,9 +243,6 @@ impl Center {
     }
 
     pub fn hide(&self) {
-        for group in self.groups.borrow().iter() {
-            group.clear_hover();
-        }
         self.window.set_visible(false);
         // Hyprland keeps keyboard focus on a layer's surface across remaps
         // without announcing it again, while GTK drops it on hide; a fresh
@@ -346,8 +343,8 @@ impl Center {
         });
     }
 
-    /// Hover state and ellipsization both depend on the rendered layout, which
-    /// only settles on the frame after the one this render is part of.
+    /// Ellipsization depends on the rendered layout, which only settles on the
+    /// frame after the one this render is part of.
     fn refresh_after_layout(&self) {
         let groups = Rc::downgrade(&self.groups);
         let laid_out = Cell::new(false);
