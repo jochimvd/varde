@@ -9,7 +9,43 @@ mod view;
 use std::{cell::RefCell, rc::Rc};
 
 use model::Snapshot;
+use state::Action;
 use view::{Bell, Center, Popups};
+
+/// The notification that keyboard commands act on, with its actions.
+pub struct Target {
+    id: u32,
+    actions: Vec<Action>,
+}
+
+impl Target {
+    pub fn has_default(&self) -> bool {
+        self.actions.iter().any(|action| action.key == "default")
+    }
+
+    /// One picker line per action; unlabelled ones fall back to their key.
+    pub fn labels(&self) -> Vec<String> {
+        self.actions.iter().map(label).map(str::to_string).collect()
+    }
+
+    fn key(&self, label_or_default: Option<&str>) -> Option<&str> {
+        let Some(chosen) = label_or_default else {
+            return self.has_default().then_some("default");
+        };
+        self.actions
+            .iter()
+            .find(|action| label(action) == chosen)
+            .map(|action| action.key.as_str())
+    }
+}
+
+fn label(action: &Action) -> &str {
+    match (action.label.trim(), action.key.as_str()) {
+        ("", "default") => "Open",
+        ("", key) => key,
+        (label, _) => label,
+    }
+}
 
 pub struct Manager {
     snapshot: RefCell<Snapshot>,
@@ -89,7 +125,38 @@ impl Manager {
         }
     }
 
-    pub(super) fn toggle_dnd(&self) {
+    pub fn latest_actionable(&self) -> Option<Target> {
+        let daemon = self.daemon.borrow();
+        let (id, actions) = daemon
+            .as_ref()?
+            .latest(|notification| !notification.actions.is_empty())?;
+        Some(Target { id, actions })
+    }
+
+    /// Invokes the action with the picked label, or the default action.
+    pub fn invoke(&self, target: &Target, label: Option<&str>) -> bool {
+        let Some(key) = target.key(label) else {
+            return false;
+        };
+        let token = gtk::gdk::Display::default()
+            .and_then(|display| view::display_activation_token(&display));
+        self.invoke_action(target.id, key, token);
+        true
+    }
+
+    pub fn dismiss_latest(&self) -> bool {
+        let daemon = self.daemon.borrow();
+        let Some(daemon) = daemon.as_ref() else {
+            return false;
+        };
+        let Some((id, _)) = daemon.latest(|_| true) else {
+            return false;
+        };
+        daemon.dismiss(id);
+        true
+    }
+
+    pub(crate) fn toggle_dnd(&self) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
             daemon.toggle_dnd();
         }
@@ -110,6 +177,12 @@ impl Manager {
     pub(super) fn invoke_action(&self, id: u32, key: &str, activation_token: Option<String>) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
             daemon.invoke_action(id, key.to_string(), activation_token);
+        }
+    }
+
+    pub(super) fn pause_popups(&self, paused: bool) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.pause_popups(paused);
         }
     }
 
@@ -167,5 +240,39 @@ impl Manager {
             .borrow()
             .as_ref()
             .is_some_and(Center::is_visible)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(actions: &[(&str, &str)]) -> Target {
+        Target {
+            id: 1,
+            actions: actions
+                .iter()
+                .map(|(key, label)| Action {
+                    key: (*key).into(),
+                    label: (*label).into(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn picker_labels_map_back_to_action_keys() {
+        let target = target(&[("default", ""), ("reply", " Reply "), ("mute", "")]);
+        assert_eq!(target.labels(), ["Open", "Reply", "mute"]);
+        assert_eq!(target.key(None), Some("default"));
+        assert_eq!(target.key(Some("Open")), Some("default"));
+        assert_eq!(target.key(Some("Reply")), Some("reply"));
+        assert_eq!(target.key(Some("mute")), Some("mute"));
+        assert_eq!(target.key(Some("Other")), None);
+    }
+
+    #[test]
+    fn targets_without_a_default_action_have_no_default_key() {
+        assert_eq!(target(&[("reply", "Reply")]).key(None), None);
     }
 }

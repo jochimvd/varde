@@ -1,18 +1,20 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     rc::Rc,
+    time::Instant,
 };
 
-use gtk::prelude::*;
+use gtk::{glib, prelude::*};
 use gtk4_layer_shell::LayerShell;
 
 use super::{
     super::{
         Manager,
         model::{Notification, Snapshot},
-        state::Urgency,
+        state::{POPUP_TIMEOUT, PopupTimer, Urgency},
     },
+    center::{CHEVRON_DOWN, CHEVRON_UP, REVEAL_DURATION},
     common::{activation_token, application, progress_bar, set_picture},
 };
 
@@ -28,6 +30,10 @@ pub(in crate::notifications) struct Popups {
     list: gtk::Box,
     manager: std::rc::Weak<Manager>,
     state: RefCell<PopupState>,
+    hovered: Rc<Cell<bool>>,
+    /// The (id, revision) of each popup on screen, in order.
+    rendered: RefCell<Vec<(u32, u64)>>,
+    timers: RefCell<HashMap<u32, Rc<Cell<Option<PopupTimer>>>>>,
 }
 
 #[derive(Default)]
@@ -112,11 +118,42 @@ impl Popups {
             .build();
         window.set_child(Some(&list));
 
+        // Hovering holds every popup on screen, as reading one usually means
+        // reading the others.
+        let hovered = Rc::new(Cell::new(false));
+        let motion = gtk::EventControllerMotion::new();
+        motion.connect_enter({
+            let manager = Rc::downgrade(manager);
+            let hovered = hovered.clone();
+            move |_, _, _| {
+                if !hovered.replace(true)
+                    && let Some(manager) = manager.upgrade()
+                {
+                    manager.pause_popups(true);
+                }
+            }
+        });
+        motion.connect_leave({
+            let manager = Rc::downgrade(manager);
+            let hovered = hovered.clone();
+            move |_| {
+                if hovered.replace(false)
+                    && let Some(manager) = manager.upgrade()
+                {
+                    manager.pause_popups(false);
+                }
+            }
+        });
+        window.add_controller(motion);
+
         Self {
             window,
             list,
             manager: Rc::downgrade(manager),
             state: RefCell::new(PopupState::default()),
+            hovered,
+            rendered: RefCell::default(),
+            timers: RefCell::default(),
         }
     }
 
@@ -129,40 +166,71 @@ impl Popups {
             manager.displayed(displayed);
         }
 
-        while let Some(child) = self.list.first_child() {
-            self.list.remove(&child);
-        }
+        let popups = snapshot
+            .groups
+            .iter()
+            .flat_map(|group| {
+                group
+                    .notifications
+                    .iter()
+                    .filter(|notification| state.visible.contains(&notification.id))
+                    .map(move |notification| (group, notification))
+            })
+            .take(MAX_POPUPS)
+            .collect::<Vec<_>>();
+        let keys = popups
+            .iter()
+            .map(|(_, notification)| (notification.id, notification.revision))
+            .collect::<Vec<_>>();
 
-        let mut shown = 0;
-        for group in &snapshot.groups {
-            let (app_name, app_icon) = application(group);
-            for notification in group
-                .notifications
-                .iter()
-                .filter(|notification| state.visible.contains(&notification.id))
-            {
+        // Rebuilding only when the popups change keeps the widgets under the
+        // pointer alive while timers start, pause, and resume.
+        let mut timers = self.timers.borrow_mut();
+        if *self.rendered.borrow() == keys {
+            for (_, notification) in &popups {
+                if let Some(timer) = timers.get(&notification.id) {
+                    timer.set(notification.popup_timer);
+                }
+            }
+        } else {
+            while let Some(child) = self.list.first_child() {
+                self.list.remove(&child);
+            }
+            timers.clear();
+            for (group, notification) in &popups {
+                let (app_name, app_icon) = application(group);
+                let timer = Rc::new(Cell::new(notification.popup_timer));
                 self.list.append(&popup_widget(
                     &app_name,
                     app_icon.as_ref(),
                     notification,
+                    &timer,
                     &self.manager,
                 ));
-                shown += 1;
-                if shown == MAX_POPUPS {
-                    break;
-                }
+                timers.insert(notification.id, timer);
             }
-            if shown == MAX_POPUPS {
-                break;
-            }
+            self.rendered.replace(keys);
         }
-        self.window
-            .set_visible(shown > 0 && !snapshot.dnd && !center_open);
+        let visible = !popups.is_empty() && !snapshot.dnd && !center_open;
+        self.window.set_visible(visible);
+        if !visible {
+            self.resume();
+        }
     }
 
     pub fn hide(&self) {
         self.state.borrow_mut().visible.clear();
         self.window.set_visible(false);
+        self.resume();
+    }
+
+    // A hidden window may never report the pointer leaving it.
+    fn resume(&self) {
+        if self.hovered.replace(false)
+            && let Some(manager) = self.manager.upgrade()
+        {
+            manager.pause_popups(false);
+        }
     }
 }
 
@@ -170,8 +238,9 @@ fn popup_widget(
     app_name: &str,
     app_icon: Option<&gio::Icon>,
     notification: &Notification,
+    timer: &Rc<Cell<Option<PopupTimer>>>,
     manager: &std::rc::Weak<Manager>,
-) -> gtk::Button {
+) -> gtk::Box {
     let card_content = gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(6)
@@ -244,22 +313,39 @@ fn popup_widget(
     content.append(&text);
     card_content.append(&content);
 
-    let card = gtk::Button::builder().child(&card_content).build();
-    let has_default = notification
-        .actions
-        .iter()
-        .any(|action| action.key == "default");
-    if has_default {
-        card.set_cursor_from_name(Some("pointer"));
-        card.connect_clicked({
-            let manager = manager.clone();
-            let id = notification.id;
-            move |card| {
-                if let Some(manager) = manager.upgrade() {
-                    manager.invoke_action(id, "default", activation_token(card));
-                }
+    let card = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .overflow(gtk::Overflow::Hidden)
+        .build();
+    card.append(&card_content);
+    if let Some(actions) = action_buttons(notification, manager) {
+        // Collapsed actions keep popups short; the chevron says they exist.
+        let chevron = gtk::Label::new(Some(CHEVRON_DOWN));
+        chevron.add_css_class("notification-popup-expand");
+        header.append(&chevron);
+        let revealer = gtk::Revealer::builder()
+            .transition_duration(REVEAL_DURATION)
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .child(&actions)
+            .build();
+        card.append(&revealer);
+        let hover = gtk::EventControllerMotion::new();
+        hover.connect_enter({
+            let revealer = revealer.clone();
+            let chevron = chevron.clone();
+            move |_, _, _| {
+                revealer.set_reveal_child(true);
+                chevron.set_label(CHEVRON_UP);
             }
         });
+        hover.connect_leave(move |_| {
+            revealer.set_reveal_child(false);
+            chevron.set_label(CHEVRON_DOWN);
+        });
+        card.add_controller(hover);
+    }
+    if notification.urgency != Urgency::Critical {
+        card.append(&timer_bar(timer.clone()));
     }
     card.add_css_class("notification-popup");
     if notification.urgency == Urgency::Critical {
@@ -281,5 +367,94 @@ fn popup_widget(
         }
     });
     card.add_controller(dismiss);
+
+    // The whole card is the default action's target. Action buttons claim
+    // their own presses, so this gesture never sees them.
+    let has_default = notification
+        .actions
+        .iter()
+        .any(|action| action.key == "default");
+    if has_default {
+        card.set_cursor_from_name(Some("pointer"));
+        let activate = gtk::GestureClick::new();
+        activate.set_button(1);
+        activate.connect_released({
+            let card = card.clone();
+            let manager = manager.clone();
+            let id = notification.id;
+            move |_, _, x, y| {
+                if card.contains(x, y)
+                    && let Some(manager) = manager.upgrade()
+                {
+                    manager.invoke_action(id, "default", activation_token(&card));
+                }
+            }
+        });
+        card.add_controller(activate);
+    }
     card
+}
+
+/// Rows of plain boxes rather than a flow box, which claims clicks on the
+/// space around its children and would take them from the card.
+fn action_buttons(
+    notification: &Notification,
+    manager: &std::rc::Weak<Manager>,
+) -> Option<gtk::Box> {
+    const PER_ROW: usize = 3;
+    let actions = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(4)
+        .build();
+    actions.add_css_class("notification-popup-actions");
+    let named = notification
+        .actions
+        .iter()
+        .filter(|action| action.key != "default" && !action.label.trim().is_empty())
+        .collect::<Vec<_>>();
+    for (index, action) in named.iter().enumerate() {
+        if index % PER_ROW == 0 {
+            actions.append(&gtk::Box::builder().spacing(4).build());
+        }
+        let label = gtk::Label::builder()
+            .label(&action.label)
+            .max_width_chars(24)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        let button = gtk::Button::builder().child(&label).build();
+        button.set_cursor_from_name(Some("pointer"));
+        button.add_css_class("notification-action");
+        button.connect_clicked({
+            let manager = manager.clone();
+            let key = action.key.clone();
+            let id = notification.id;
+            move |button| {
+                if let Some(manager) = manager.upgrade() {
+                    manager.invoke_action(id, &key, activation_token(button));
+                }
+            }
+        });
+        actions
+            .last_child()
+            .and_downcast::<gtk::Box>()
+            .expect("a row was just appended")
+            .append(&button);
+    }
+    (!named.is_empty()).then_some(actions)
+}
+
+/// A popup's timer starts once it is displayed; until then the bar is full.
+fn timer_bar(timer: Rc<Cell<Option<PopupTimer>>>) -> gtk::ProgressBar {
+    let fraction = move || {
+        timer.get().map_or(1.0, |timer| {
+            timer.remaining(Instant::now()).as_secs_f64() / POPUP_TIMEOUT.as_secs_f64()
+        })
+    };
+    let bar = gtk::ProgressBar::builder().fraction(fraction()).build();
+    bar.add_css_class("notification-popup-timer");
+    bar.add_tick_callback(move |bar, _| {
+        bar.set_fraction(fraction());
+        glib::ControlFlow::Continue
+    });
+    bar
 }

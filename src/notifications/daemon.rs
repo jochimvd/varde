@@ -15,7 +15,7 @@ use super::{
     image::{self, Thumbnail},
     model::{self, Snapshot},
     sound::{Player, Sound},
-    state::{Action, CloseReason, Incoming, Picture, Store, Urgency},
+    state::{Action, CloseReason, Incoming, Notification, Picture, Store, Urgency},
 };
 
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -40,6 +40,14 @@ impl Control {
             available: self.available.load(Ordering::Relaxed),
             ..model::from_state(&self.store.lock().expect("notification store poisoned"))
         }
+    }
+
+    pub fn latest(&self, matches: impl Fn(&Notification) -> bool) -> Option<(u32, Vec<Action>)> {
+        self.store
+            .lock()
+            .expect("notification store poisoned")
+            .latest(matches)
+            .map(|notification| (notification.id, notification.actions.clone()))
     }
 
     pub fn toggle_dnd(&self) {
@@ -67,6 +75,10 @@ impl Control {
     pub fn displayed(&self, notifications: Vec<(u32, u64)>) {
         let _ = self.commands.send(Command::Displayed(notifications));
     }
+
+    pub fn pause_popups(&self, paused: bool) {
+        let _ = self.commands.send(Command::PausePopups(paused));
+    }
 }
 
 enum Command {
@@ -78,6 +90,7 @@ enum Command {
     DismissGroup(Vec<u32>),
     InvokeAction(u32, String, Option<String>),
     Displayed(Vec<(u32, u64)>),
+    PausePopups(bool),
 }
 
 #[derive(Clone)]
@@ -269,10 +282,22 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) {
             Command::Displayed(notifications) => {
                 let now = Instant::now();
                 let mut store = shared.store.lock().expect("notification store poisoned");
+                let mut started = false;
                 for (id, revision) in notifications {
-                    store.displayed(id, revision, now);
+                    started |= store.displayed(id, revision, now);
                 }
-                continue;
+                // Popups draw their countdown from the deadlines just set.
+                if !started {
+                    continue;
+                }
+            }
+            Command::PausePopups(paused) => {
+                let mut store = shared.store.lock().expect("notification store poisoned");
+                if paused {
+                    store.pause_popups(Instant::now());
+                } else {
+                    store.resume_popups(Instant::now());
+                }
             }
         }
         shared.publish();

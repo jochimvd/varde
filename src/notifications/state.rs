@@ -3,7 +3,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use super::image::Thumbnail;
 
 const MAX_NOTIFICATIONS: usize = 100;
-const POPUP_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const POPUP_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum Urgency {
@@ -11,6 +11,22 @@ pub(super) enum Urgency {
     #[default]
     Normal,
     Critical,
+}
+
+/// How long a popup has left: a deadline, or the remaining time while paused.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum PopupTimer {
+    Running(Instant),
+    Paused(Duration),
+}
+
+impl PopupTimer {
+    pub fn remaining(self, now: Instant) -> Duration {
+        match self {
+            Self::Running(deadline) => deadline.saturating_duration_since(now),
+            Self::Paused(remaining) => remaining,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -85,6 +101,7 @@ pub(super) struct Store {
     next_revision: u64,
     notifications: Vec<Stored>,
     dnd: bool,
+    popups_paused_at: Option<Instant>,
 }
 
 pub(super) struct Received {
@@ -168,6 +185,9 @@ impl Store {
 
     // Popup timeouts end presentation, not the notification's lifetime.
     pub fn hide_due_popups(&mut self, now: Instant) -> Vec<(u32, CloseReason)> {
+        if self.popups_paused_at.is_some() {
+            return Vec::new();
+        }
         let due = self
             .notifications
             .iter()
@@ -189,18 +209,53 @@ impl Store {
     }
 
     pub fn displayed(&mut self, id: u32, revision: u64, now: Instant) -> bool {
+        // A popup shown during a pause gets its full timeout once it resumes.
+        let start = self.popups_paused_at.unwrap_or(now);
         let Some(stored) = self.notifications.iter_mut().find(|stored| {
             stored.notification.id == id && stored.notification.revision == revision
         }) else {
             return false;
         };
         stored.popup_deadline = (stored.notification.urgency != Urgency::Critical)
-            .then(|| now.checked_add(POPUP_TIMEOUT))
+            .then(|| start.checked_add(POPUP_TIMEOUT))
             .flatten();
         true
     }
 
+    pub fn pause_popups(&mut self, now: Instant) {
+        self.popups_paused_at.get_or_insert(now);
+    }
+
+    pub fn resume_popups(&mut self, now: Instant) {
+        let Some(paused_at) = self.popups_paused_at.take() else {
+            return;
+        };
+        let paused = now.saturating_duration_since(paused_at);
+        for deadline in self
+            .notifications
+            .iter_mut()
+            .filter_map(|stored| stored.popup_deadline.as_mut())
+        {
+            *deadline += paused;
+        }
+    }
+
+    pub fn popup_timer(&self, id: u32) -> Option<PopupTimer> {
+        let deadline = self
+            .notifications
+            .iter()
+            .find(|stored| stored.notification.id == id)?
+            .popup_deadline?;
+        Some(match self.popups_paused_at {
+            Some(paused_at) => PopupTimer::Paused(deadline.saturating_duration_since(paused_at)),
+            None => PopupTimer::Running(deadline),
+        })
+    }
+
     pub fn next_popup_deadline(&self) -> Option<Instant> {
+        if self.popups_paused_at.is_some() {
+            return None;
+        }
         self.notifications
             .iter()
             .filter_map(|stored| stored.popup_deadline)
@@ -229,6 +284,20 @@ impl Store {
         self.notifications
             .iter()
             .map(|stored| (&stored.notification, stored.show_popup))
+    }
+
+    /// The newest matching notification with a popup, else the newest
+    /// matching one, so a lingering critical popup wins over the center.
+    pub fn latest(&self, matches: impl Fn(&Notification) -> bool) -> Option<&Notification> {
+        let mut matching = self
+            .notifications
+            .iter()
+            .filter(|stored| matches(&stored.notification));
+        let newest = matching.clone().next();
+        matching
+            .find(|stored| stored.show_popup)
+            .or(newest)
+            .map(|stored| &stored.notification)
     }
 
     fn replacement_index(&self, incoming: &Incoming) -> Option<usize> {
@@ -329,6 +398,33 @@ mod tests {
     }
 
     #[test]
+    fn latest_prefers_the_newest_popup_then_the_newest_notification() {
+        let now = Instant::now();
+        let mut store = Store::default();
+        let older = store.notify(incoming("older"));
+        let newer = store.notify(incoming("newer"));
+        let latest = |store: &Store| store.latest(|_| true).map(|notification| notification.id);
+        assert_eq!(latest(&store), Some(newer));
+
+        let revision = notification(&store, newer).unwrap().0.revision;
+        store.displayed(newer, revision, now);
+        store.hide_due_popups(now + POPUP_TIMEOUT);
+        assert_eq!(latest(&store), Some(older));
+
+        let revision = notification(&store, older).unwrap().0.revision;
+        store.displayed(older, revision, now);
+        store.hide_due_popups(now + POPUP_TIMEOUT);
+        assert_eq!(latest(&store), Some(newer));
+        assert_eq!(
+            store
+                .latest(|notification| notification.id == older)
+                .map(|notification| notification.id),
+            Some(older)
+        );
+        assert_eq!(Store::default().latest(|_| true), None);
+    }
+
+    #[test]
     fn replacements_always_receive_a_new_revision() {
         let mut store = Store::default();
         let id = store.notify(incoming("same"));
@@ -401,6 +497,55 @@ mod tests {
         assert!(!notification(&store, low).unwrap().1);
         assert!(!notification(&store, normal).unwrap().1);
         assert!(notification(&store, critical).unwrap().1);
+    }
+
+    #[test]
+    fn paused_popups_keep_their_remaining_time() {
+        let now = Instant::now();
+        let second = Duration::from_secs(1);
+        let mut store = Store::default();
+        let shown = store.notify(incoming("shown"));
+        assert!(store.displayed(shown, 1, now));
+        let queued = store.notify(incoming("queued"));
+
+        store.pause_popups(now + second);
+        store.pause_popups(now + 2 * second);
+        assert_eq!(
+            store.popup_timer(shown),
+            Some(PopupTimer::Paused(POPUP_TIMEOUT - second))
+        );
+        assert!(store.next_popup_deadline().is_none());
+        assert!(store.hide_due_popups(now + 60 * second).is_empty());
+        assert!(notification(&store, shown).unwrap().1);
+        assert!(store.displayed(queued, 2, now + 3 * second));
+
+        store.resume_popups(now + 10 * second);
+        assert_eq!(
+            store.popup_timer(shown),
+            Some(PopupTimer::Running(now + 9 * second + POPUP_TIMEOUT))
+        );
+        assert_eq!(
+            store.popup_timer(queued),
+            Some(PopupTimer::Running(now + 10 * second + POPUP_TIMEOUT))
+        );
+        store.hide_due_popups(now + 9 * second + POPUP_TIMEOUT);
+        assert!(!notification(&store, shown).unwrap().1);
+        assert!(notification(&store, queued).unwrap().1);
+    }
+
+    #[test]
+    fn popup_timers_report_the_remaining_time() {
+        let now = Instant::now();
+        let second = Duration::from_secs(1);
+        assert_eq!(PopupTimer::Running(now + second).remaining(now), second);
+        assert_eq!(
+            PopupTimer::Running(now).remaining(now + second),
+            Duration::ZERO
+        );
+        assert_eq!(
+            PopupTimer::Paused(second).remaining(now + 60 * second),
+            second
+        );
     }
 
     #[test]
