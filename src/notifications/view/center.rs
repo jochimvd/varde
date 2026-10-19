@@ -46,7 +46,6 @@ pub(in crate::notifications) struct Center {
     groups: Rc<RefCell<Vec<GroupView>>>,
     seen: RefCell<Seen>,
     ticking: Rc<Cell<bool>>,
-    on_expansion: Rc<dyn Fn()>,
     manager: Weak<Manager>,
     interactive: bool,
 }
@@ -197,9 +196,7 @@ impl Center {
         });
         window.add_controller(keys);
 
-        let groups = Rc::new(RefCell::new(Vec::new()));
         Self {
-            on_expansion: expansion_tracker(&window, &groups),
             window,
             backdrop,
             anchor: anchor.clone(),
@@ -208,7 +205,7 @@ impl Center {
             stack,
             dnd,
             clear,
-            groups,
+            groups: Rc::new(RefCell::new(Vec::new())),
             seen: RefCell::new(Seen::new()),
             ticking: Rc::new(Cell::new(false)),
             manager: Rc::downgrade(manager),
@@ -286,7 +283,7 @@ impl Center {
                 .expect("the group order only holds keys of the current snapshot");
             let view = match stale.iter().position(|view| view.key == *key) {
                 Some(index) => stale.remove(index),
-                None => GroupView::new(key, &self.manager, &self.on_expansion, self.interactive),
+                None => GroupView::new(key, &self.manager, self.interactive),
             };
             view.update(group, &self.seen.borrow());
             if view.container.parent().is_none() {
@@ -366,36 +363,6 @@ impl Center {
             glib::ControlFlow::Break
         });
     }
-}
-
-/// Follows an expansion that a group or a notification just started. The rows
-/// it moved settle once it ends.
-fn expansion_tracker(
-    window: &gtk::ApplicationWindow,
-    groups: &Rc<RefCell<Vec<GroupView>>>,
-) -> Rc<dyn Fn()> {
-    let window = window.downgrade();
-    let groups = Rc::downgrade(groups);
-    Rc::new(move || {
-        let (Some(window), Some(groups)) = (window.upgrade(), groups.upgrade()) else {
-            return;
-        };
-        let Some(clock) = window.frame_clock() else {
-            return;
-        };
-        // The reveal duration plus a frame, so the settled size is presented.
-        let deadline = clock.frame_time() + i64::from(REVEAL_DURATION + 20) * 1000;
-        window.add_tick_callback(move |window, clock| {
-            window.present();
-            if clock.frame_time() < deadline {
-                return glib::ControlFlow::Continue;
-            }
-            for group in groups.borrow().iter() {
-                group.refresh();
-            }
-            glib::ControlFlow::Break
-        });
-    })
 }
 
 fn control_button(icon: &str, tooltip: &str) -> gtk::Button {

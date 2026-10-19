@@ -27,18 +27,12 @@ pub(super) struct GroupView {
     revealer: gtk::Revealer,
     rows: RefCell<Vec<RowView>>,
     notifications: Rc<RefCell<Vec<u32>>>,
-    on_expansion: Rc<dyn Fn()>,
     manager: Weak<Manager>,
     interactive: bool,
 }
 
 impl GroupView {
-    pub(super) fn new(
-        key: &str,
-        manager: &Weak<Manager>,
-        on_expansion: &Rc<dyn Fn()>,
-        interactive: bool,
-    ) -> Self {
+    pub(super) fn new(key: &str, manager: &Weak<Manager>, interactive: bool) -> Self {
         let container = gtk::Box::builder()
             .orientation(gtk::Orientation::Vertical)
             .build();
@@ -102,7 +96,6 @@ impl GroupView {
             let chevron = chevron.clone();
             let fresh = fresh.clone();
             let has_fresh = Rc::clone(&has_fresh);
-            let on_expansion = Rc::clone(on_expansion);
             move |_| {
                 let Some(container) = container.upgrade() else {
                     return;
@@ -116,7 +109,6 @@ impl GroupView {
                 } else {
                     container.add_css_class("collapsed");
                 }
-                on_expansion();
             }
         });
 
@@ -153,7 +145,6 @@ impl GroupView {
             revealer,
             rows: RefCell::new(Vec::new()),
             notifications,
-            on_expansion: Rc::clone(on_expansion),
             manager: manager.clone(),
             interactive,
         }
@@ -188,7 +179,7 @@ impl GroupView {
         for notification in &group.notifications {
             let row = match stale.iter().position(|row| row.id() == notification.id) {
                 Some(index) => stale.remove(index),
-                None => RowView::new(&self.manager, &self.on_expansion, self.interactive),
+                None => RowView::new(&self.manager, self.interactive),
             };
             let unseen = !seen.contains(&(notification.id, notification.revision));
             fresh |= unseen;

@@ -68,11 +68,7 @@ struct Text {
 }
 
 impl RowView {
-    pub(super) fn new(
-        manager: &Weak<Manager>,
-        on_expansion: &Rc<dyn Fn()>,
-        interactive: bool,
-    ) -> Self {
+    pub(super) fn new(manager: &Weak<Manager>, interactive: bool) -> Self {
         let text = Text::new();
         let picture = gtk::Image::builder()
             .pixel_size(PICTURE_SIZE)
@@ -136,11 +132,9 @@ impl RowView {
         });
         expand.connect_clicked({
             let expansion = Rc::downgrade(&expansion);
-            let on_expansion = Rc::clone(on_expansion);
             move |_| {
                 if let Some(expansion) = expansion.upgrade() {
                     expansion.set(!expansion.expanded.get());
-                    on_expansion();
                 }
             }
         });
