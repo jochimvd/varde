@@ -3,13 +3,13 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use gtk::prelude::*;
+use gtk::{gdk, prelude::*};
 
 use crate::notifications::{Manager, model::Group, state::Urgency, view::common::application};
 
 use super::{
     CHEVRON_DOWN, CHEVRON_UP, REVEAL_DURATION, Seen,
-    row::{Pointer, RowView, fresh_dot, within},
+    row::{RowView, fresh_dot},
 };
 
 const ICON_SIZE: i32 = 20;
@@ -17,7 +17,6 @@ const ICON_SIZE: i32 = 20;
 pub(super) struct GroupView {
     pub(super) container: gtk::Box,
     pub(super) key: String,
-    header: gtk::Box,
     icon: gtk::Stack,
     image: gtk::Image,
     name: gtk::Label,
@@ -27,7 +26,7 @@ pub(super) struct GroupView {
     list: gtk::Box,
     revealer: gtk::Revealer,
     rows: RefCell<Vec<RowView>>,
-    notifications: RefCell<Vec<u32>>,
+    notifications: Rc<RefCell<Vec<u32>>>,
     on_expansion: Rc<dyn Fn()>,
     manager: Weak<Manager>,
     interactive: bool,
@@ -121,13 +120,29 @@ impl GroupView {
             }
         });
 
+        let notifications = Rc::new(RefCell::new(Vec::new()));
+        if interactive {
+            let dismiss = gtk::GestureClick::builder()
+                .button(gdk::BUTTON_SECONDARY)
+                .build();
+            dismiss.connect_released({
+                let manager = manager.clone();
+                let notifications = Rc::clone(&notifications);
+                move |_, _, _, _| {
+                    if let Some(manager) = manager.upgrade() {
+                        manager.dismiss_group(notifications.borrow().clone());
+                    }
+                }
+            });
+            header.add_controller(dismiss);
+        }
+
         container.append(&header);
         container.append(&revealer);
 
         Self {
             container,
             key: key.to_string(),
-            header,
             icon,
             image,
             name,
@@ -137,25 +152,11 @@ impl GroupView {
             list,
             revealer,
             rows: RefCell::new(Vec::new()),
-            notifications: RefCell::new(Vec::new()),
+            notifications,
             on_expansion: Rc::clone(on_expansion),
             manager: manager.clone(),
             interactive,
         }
-    }
-
-    pub(super) fn notifications(&self) -> Vec<u32> {
-        self.notifications.borrow().clone()
-    }
-
-    pub(super) fn pointer_target(&self, picked: &gtk::Widget) -> Option<Pointer> {
-        if within(picked, &self.header) {
-            return Some(Pointer::Header(self.key.clone()));
-        }
-        self.rows
-            .borrow()
-            .iter()
-            .find_map(|row| row.pointer_target(picked))
     }
 
     pub(super) fn update(&self, group: &Group, seen: &Seen) {

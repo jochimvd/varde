@@ -3,7 +3,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
-use gtk::{graphene, pango, prelude::*};
+use gtk::{gdk, graphene, pango, prelude::*};
 
 use crate::notifications::{
     Manager,
@@ -35,24 +35,13 @@ pub(super) struct RowView {
     picture: gtk::Image,
     actions: gtk::FlowBox,
     expansion: Rc<Expansion>,
-    id: Cell<u32>,
+    id: Rc<Cell<u32>>,
     received_at: Cell<Option<i64>>,
     revision: Cell<Option<u64>>,
     named_actions: Cell<bool>,
     actionable: Rc<Cell<bool>>,
     manager: Weak<Manager>,
     interactive: bool,
-}
-
-/// What the pointer rests on inside the notification list.
-#[derive(Clone, PartialEq, Eq)]
-pub(super) enum Pointer {
-    /// The header of the group with this key.
-    Header(String),
-    Row {
-        id: u32,
-        activates: bool,
-    },
 }
 
 /// Everything the expansion control reveals: the full summary, the body text
@@ -158,6 +147,32 @@ impl RowView {
 
         let actionable = Rc::new(Cell::new(false));
         track_hover(&surface, &actionable);
+        let id = Rc::new(Cell::new(0));
+        if interactive {
+            // Buttons claim their own primary clicks; a secondary click
+            // anywhere in the row dismisses it.
+            let click = gtk::GestureClick::builder().button(0).build();
+            click.connect_released({
+                let manager = manager.clone();
+                let id = Rc::clone(&id);
+                let actionable = Rc::clone(&actionable);
+                move |click, _, _, _| {
+                    let Some(manager) = manager.upgrade() else {
+                        return;
+                    };
+                    match click.current_button() {
+                        gdk::BUTTON_SECONDARY => manager.dismiss(id.get()),
+                        gdk::BUTTON_PRIMARY if actionable.get() => {
+                            let token = click.widget().and_then(|row| activation_token(&row));
+                            manager.invoke_action(id.get(), "default", token);
+                            manager.close();
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            container.add_controller(click);
+        }
 
         Self {
             container,
@@ -165,7 +180,7 @@ impl RowView {
             picture,
             actions,
             expansion,
-            id: Cell::new(0),
+            id,
             received_at: Cell::new(None),
             revision: Cell::new(None),
             named_actions: Cell::new(false),
@@ -173,16 +188,6 @@ impl RowView {
             manager: manager.clone(),
             interactive,
         }
-    }
-
-    /// Reports what the point rests on, once the caller has resolved it to a
-    /// widget. Right-clicking anywhere in the row targets the notification;
-    /// only the surface itself activates it.
-    pub(super) fn pointer_target(&self, picked: &gtk::Widget) -> Option<Pointer> {
-        within(picked, &self.container).then(|| Pointer::Row {
-            id: self.id.get(),
-            activates: self.actionable.get() && !on_control(picked),
-        })
     }
 
     pub(super) fn id(&self) -> u32 {
@@ -530,10 +535,6 @@ fn set_hover(surface: &gtk::Box, hovered: bool) {
 /// action row still belongs to the notification.
 fn on_control(picked: &gtk::Widget) -> bool {
     picked.ancestor(gtk::Button::static_type()).is_some()
-}
-
-pub(super) fn within(widget: &gtk::Widget, container: &impl IsA<gtk::Widget>) -> bool {
-    widget == container.as_ref() || widget.is_ancestor(container)
 }
 
 fn pointer_position(widget: &impl IsA<gtk::Widget>) -> Option<(f64, f64)> {
