@@ -446,6 +446,37 @@ window.notification-popups {
     border-left: 2px solid @critical_color;
 }
 
+.notification-popup-expand {
+    /* Proportional variant: the monospaced one offsets the wide chevrons. */
+    font-family: 'JetBrainsMono Nerd Font Propo';
+    color: @text_muted_color;
+}
+
+.notification-popup-actions {
+    margin-top: 8px;
+}
+
+/* Runs along the card's bottom edge; the card clips it to its corners. */
+.notification-popup-timer {
+    margin: 8px -12px -10px;
+}
+
+.notification-popup-timer trough,
+.notification-popup-timer progress {
+    min-height: 2px;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.notification-popup-timer trough {
+    background: none;
+}
+
+.notification-popup-timer progress {
+    background: @text_muted_color;
+}
+
 .notification-popup-app {
     color: @text_secondary_color;
     font-size: 12px;

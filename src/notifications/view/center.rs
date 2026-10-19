@@ -22,11 +22,11 @@ const PANEL_OFFSET: i32 = 18;
 const MIN_CONTENT_HEIGHT: i32 = 98;
 const MAX_CONTENT_HEIGHT: i32 = 520;
 const GROUP_SPACING: i32 = 8;
-const REVEAL_DURATION: u32 = 150;
+pub(super) const REVEAL_DURATION: u32 = 150;
 const TIME_REFRESH_SECONDS: u32 = 15;
 /// Chevrons show what the click does: reveal, or collapse again.
-const CHEVRON_DOWN: &str = "\u{f0140}";
-const CHEVRON_UP: &str = "\u{f0143}";
+pub(super) const CHEVRON_DOWN: &str = "\u{f0140}";
+pub(super) const CHEVRON_UP: &str = "\u{f0143}";
 
 /// The notifications on screen when the center opened; anything else arrived
 /// while the user was reading it.

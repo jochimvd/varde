@@ -62,6 +62,7 @@ pub(super) struct Notification {
     pub popup_revision: u64,
     pub received_at: Option<i64>,
     pub show_popup: bool,
+    pub popup_timer: Option<state::PopupTimer>,
     app_name: Option<String>,
     pub app_icon: Option<String>,
     pub picture: Option<state::Picture>,
@@ -76,20 +77,25 @@ pub(super) struct Notification {
 
 pub(super) fn from_state(store: &state::Store) -> Snapshot {
     group(
-        store
-            .notifications()
-            .map(|(notification, show_popup)| from_state_notification(notification, show_popup)),
+        store.notifications().map(|(notification, show_popup)| {
+            from_state_notification(notification, show_popup, store.popup_timer(notification.id))
+        }),
         store.dnd(),
     )
 }
 
-fn from_state_notification(notification: &state::Notification, show_popup: bool) -> Notification {
+fn from_state_notification(
+    notification: &state::Notification,
+    show_popup: bool,
+    popup_timer: Option<state::PopupTimer>,
+) -> Notification {
     Notification {
         id: notification.id,
         revision: notification.revision,
         popup_revision: notification.popup_revision,
         received_at: Some(notification.received_at),
         show_popup,
+        popup_timer,
         app_name: Some(notification.app_name.clone()),
         app_icon: (!notification.app_icon.is_empty()).then(|| notification.app_icon.clone()),
         picture: notification.picture.clone(),
@@ -191,6 +197,7 @@ fn notification(
         popup_revision: 1,
         received_at: None,
         show_popup,
+        popup_timer: None,
         app_name: app_name.map(str::to_string),
         app_icon: None,
         picture: None,

@@ -180,6 +180,12 @@ impl Manager {
         }
     }
 
+    pub(super) fn pause_popups(&self, paused: bool) {
+        if let Some(daemon) = self.daemon.borrow().as_ref() {
+            daemon.pause_popups(paused);
+        }
+    }
+
     pub(super) fn displayed(&self, notifications: Vec<(u32, u64)>) {
         if let Some(daemon) = self.daemon.borrow().as_ref() {
             daemon.displayed(notifications);

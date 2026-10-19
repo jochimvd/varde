@@ -75,6 +75,10 @@ impl Control {
     pub fn displayed(&self, notifications: Vec<(u32, u64)>) {
         let _ = self.commands.send(Command::Displayed(notifications));
     }
+
+    pub fn pause_popups(&self, paused: bool) {
+        let _ = self.commands.send(Command::PausePopups(paused));
+    }
 }
 
 enum Command {
@@ -86,6 +90,7 @@ enum Command {
     DismissGroup(Vec<u32>),
     InvokeAction(u32, String, Option<String>),
     Displayed(Vec<(u32, u64)>),
+    PausePopups(bool),
 }
 
 #[derive(Clone)]
@@ -277,10 +282,22 @@ fn run(shared: Shared, commands: mpsc::Receiver<Command>) {
             Command::Displayed(notifications) => {
                 let now = Instant::now();
                 let mut store = shared.store.lock().expect("notification store poisoned");
+                let mut started = false;
                 for (id, revision) in notifications {
-                    store.displayed(id, revision, now);
+                    started |= store.displayed(id, revision, now);
                 }
-                continue;
+                // Popups draw their countdown from the deadlines just set.
+                if !started {
+                    continue;
+                }
+            }
+            Command::PausePopups(paused) => {
+                let mut store = shared.store.lock().expect("notification store poisoned");
+                if paused {
+                    store.pause_popups(Instant::now());
+                } else {
+                    store.resume_popups(Instant::now());
+                }
             }
         }
         shared.publish();
