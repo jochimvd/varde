@@ -513,11 +513,13 @@ impl Notifications {
 
 fn notification_actions(values: &[String]) -> Vec<Action> {
     values
-        .chunks_exact(2)
+        .as_chunks()
+        .0
+        .iter()
         .take(MAX_ACTIONS)
-        .map(|pair| Action {
-            key: truncate_utf8(&pair[0], MAX_ACTION_KEY_BYTES),
-            label: truncate_utf8(&pair[1], MAX_ACTION_LABEL_BYTES),
+        .map(|[key, label]| Action {
+            key: truncate_utf8(key, MAX_ACTION_KEY_BYTES),
+            label: truncate_utf8(label, MAX_ACTION_LABEL_BYTES),
         })
         .collect()
 }
