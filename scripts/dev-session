@@ -50,12 +50,14 @@ done
 
 varde_dev_select_session "$session"
 
-for command in cargo dbus-daemon flock Hyprland hyprctl jq; do
+hyprland=${VARDE_DEV_HYPRLAND:-Hyprland}
+for command in cargo dbus-daemon flock "$hyprland" hyprctl jq; do
     command -v "$command" >/dev/null || {
         printf 'missing required command: %s\n' "$command" >&2
         exit 1
     }
 done
+hyprland=$(realpath -- "$(command -v "$hyprland")")
 
 if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
     printf 'dev-session must be started from an existing Wayland session\n' >&2
@@ -120,7 +122,7 @@ application_id="org.varde.desktop.Development.${session//-/_}"
 host_workspace="varde-dev-$session"
 work_dir="$VARDE_DEV_RUNTIME_DIR/work"
 rm -f -- "$launcher_pid_file"
-launch_command="env XDG_STATE_HOME=$VARDE_DEV_RUNTIME_DIR/state VARDE_NOTIFICATION_BUS_ADDRESS=$bus_address VARDE_DEV_APP_ID=$application_id VARDE_DEV_BINARY=$repo_dir/target/$profile/varde$renderer_env$debug_layout_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
+launch_command="env XDG_STATE_HOME=$VARDE_DEV_RUNTIME_DIR/state VARDE_NOTIFICATION_BUS_ADDRESS=$bus_address VARDE_DEV_APP_ID=$application_id VARDE_DEV_BINARY=$repo_dir/target/$profile/varde$renderer_env$debug_layout_env HYPRLAND_NO_SD_NOTIFY=1 HYPRLAND_NO_SD_VARS=1 VARDE_DEV_HYPRLAND=$hyprland $repo_dir/scripts/dev-compositor $launcher_pid_file $work_dir --config $repo_dir/dev/hyprland.lua"
 hyprctl -i "$host_instance" eval \
     "hl.dispatch(hl.dsp.exec_cmd('$launch_command', { \
 float = true, size = { 1280, 720 }, center = true, \

@@ -26,6 +26,13 @@ scripts/dev-session --release
 scripts/dev-session --cairo
 ```
 
+Set `VARDE_DEV_HYPRLAND` to run the nested compositor with another Hyprland
+binary, such as a local build carrying an unreleased fix:
+
+```sh
+VARDE_DEV_HYPRLAND=~/src/hyprland/build/Hyprland scripts/dev-session
+```
+
 The session starts without changing workspace or taking focus. Show it when
 needed:
 
