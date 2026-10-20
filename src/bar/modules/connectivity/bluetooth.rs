@@ -1,45 +1,57 @@
 use std::{cell::Cell, rc::Rc, time::Duration};
 
-use gtk::prelude::*;
-
 use super::command::{
-    StateClass, command, module, on_click, property, spawn_shell_then_refresh, strip_ansi, watch,
+    Button, Refresh, Shown, command, on_click, property, spawn_shell_then_refresh, strip_ansi,
+    watch,
 };
-use crate::bar::modules::open_floating;
+use crate::bar::{Msg, Updates, modules::open_floating};
 
 const INTERVAL: Duration = Duration::from_secs(5);
 
-pub fn bluetooth() -> gtk::Button {
-    let (button, label) = module("bluetooth");
-    let powered = Rc::new(Cell::new(None));
-    let widget = button.clone();
-    let mut class = StateClass::new(&button);
-    let refresh = watch(INTERVAL, state, {
-        let powered = Rc::clone(&powered);
-        move |state| {
-            powered.set(state.powered());
-            class.set(state.class());
-            label.set_text(state.icon());
-            widget.set_tooltip_text(Some(&state.tooltip()));
-            widget.set_visible(!matches!(state, State::NoController));
-        }
-    });
-    on_click(&button, move |mouse_button| match mouse_button {
-        1 => open_floating("$TERMINAL -e bluetui"),
-        3 => {
-            if let Some(powered) = powered.get() {
-                let command = if powered {
-                    "bluetoothctl power off"
-                } else {
-                    "bluetoothctl power on"
-                };
-                spawn_shell_then_refresh(command, refresh.clone());
-            }
-        }
-        _ => {}
-    });
+pub struct Bluetooth {
+    powered: Rc<Cell<Option<bool>>>,
+    refresh: Refresh,
+}
 
-    button
+impl Bluetooth {
+    pub fn new(updates: &Updates) -> Self {
+        let powered = Rc::new(Cell::new(None));
+        let refresh = watch(INTERVAL, state, {
+            let updates = updates.clone();
+            let powered = powered.clone();
+            move |state| {
+                powered.set(state.powered());
+                updates.send(Msg::Bluetooth(Shown {
+                    class: state.class(),
+                    text: state.icon(),
+                    tooltip: state.tooltip(),
+                    visible: !matches!(state, State::NoController),
+                }));
+            }
+        });
+        Self { powered, refresh }
+    }
+
+    pub fn widget(&self) -> Button {
+        let button = Button::new("bluetooth");
+        let powered = self.powered.clone();
+        let refresh = self.refresh.clone();
+        on_click(&button.button, move |mouse_button| match mouse_button {
+            1 => open_floating("$TERMINAL -e bluetui"),
+            3 => {
+                if let Some(powered) = powered.get() {
+                    let command = if powered {
+                        "bluetoothctl power off"
+                    } else {
+                        "bluetoothctl power on"
+                    };
+                    spawn_shell_then_refresh(command, refresh.clone());
+                }
+            }
+            _ => {}
+        });
+        button
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

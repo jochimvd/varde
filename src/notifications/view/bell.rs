@@ -1,8 +1,4 @@
-use std::{
-    cell::{Cell, RefCell},
-    f64::consts::TAU,
-    rc::Rc,
-};
+use std::{cell::Cell, f64::consts::TAU, rc::Rc};
 
 use gtk::{cairo, prelude::*};
 
@@ -20,15 +16,37 @@ struct BellState {
     notified: bool,
 }
 
-pub(in crate::notifications) struct Bell {
+/// What the bars' notification buttons show.
+#[derive(Clone)]
+pub struct Indicator {
+    state: BellState,
+    alt: &'static str,
+    tooltip: String,
+}
+
+impl Indicator {
+    pub(in crate::notifications) fn new(snapshot: &Snapshot) -> Self {
+        Self {
+            state: BellState {
+                dnd: snapshot.dnd,
+                notified: snapshot.count > 0,
+            },
+            alt: snapshot.alt(),
+            tooltip: snapshot.tooltip(),
+        }
+    }
+}
+
+/// One bar's notification button.
+pub struct Bell {
     pub button: gtk::Button,
     icon: gtk::DrawingArea,
     state: Rc<Cell<BellState>>,
-    class: RefCell<String>,
+    class: &'static str,
 }
 
 impl Bell {
-    pub fn new(manager: &Rc<Manager>) -> Self {
+    pub(in crate::notifications) fn new(manager: &Rc<Manager>) -> Self {
         let button = gtk::Button::builder()
             .focusable(false)
             .valign(gtk::Align::Center)
@@ -52,9 +70,13 @@ impl Bell {
 
         button.connect_clicked({
             let manager = Rc::downgrade(manager);
-            move |_| {
+            move |button| {
+                let monitor = button
+                    .native()
+                    .and_then(|native| native.surface())
+                    .and_then(|surface| surface.display().monitor_at_surface(&surface));
                 if let Some(manager) = manager.upgrade() {
-                    manager.toggle();
+                    manager.toggle(monitor.as_ref());
                 }
             }
         });
@@ -80,30 +102,20 @@ impl Bell {
             button,
             icon,
             state,
-            class: RefCell::new(String::new()),
+            class: "",
         }
     }
 
-    pub fn update(&self, snapshot: &Snapshot, center_open: bool) {
-        let alt = snapshot.alt();
-        self.state.set(BellState {
-            dnd: snapshot.dnd,
-            notified: snapshot.count > 0,
-        });
+    pub fn show(&mut self, indicator: &Indicator) {
+        self.state.set(indicator.state);
         self.icon.queue_draw();
-        // GTK chains a tooltip shown while the center opens under the center
-        // popover before it has mapped; that popup is never configured and the
-        // shell blocks waiting for it. The open center says the same anyway.
-        self.button
-            .set_tooltip_text((!center_open).then(|| snapshot.tooltip()).as_deref());
-
-        let mut current = self.class.borrow_mut();
-        if *current != alt {
-            if !current.is_empty() {
-                self.button.remove_css_class(&current);
+        self.button.set_tooltip_text(Some(&indicator.tooltip));
+        if self.class != indicator.alt {
+            if !self.class.is_empty() {
+                self.button.remove_css_class(self.class);
             }
-            self.button.add_css_class(alt);
-            *current = alt.into();
+            self.button.add_css_class(indicator.alt);
+            self.class = indicator.alt;
         }
     }
 }

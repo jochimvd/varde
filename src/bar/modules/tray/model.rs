@@ -4,7 +4,7 @@ pub(super) const ICON_SIZE: i32 = 14;
 const ITEM_PATH: &str = "/StatusNotifierItem";
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(super) struct ItemId {
+pub struct ItemId {
     pub service: String,
     pub path: String,
 }
@@ -58,7 +58,7 @@ fn valid_path(path: &str) -> bool {
 }
 
 #[derive(Clone)]
-pub(super) struct Item {
+pub struct Item {
     pub id: ItemId,
     pub status: String,
     pub tooltip: Option<String>,
@@ -92,16 +92,40 @@ pub(super) enum ToggleKind {
     Radio,
 }
 
-pub(super) enum Event {
+pub enum Event {
     Upsert(Item),
     Remove(ItemId),
 }
 
+impl Event {
+    pub fn id(&self) -> &ItemId {
+        match self {
+            Event::Upsert(item) => &item.id,
+            Event::Remove(id) => id,
+        }
+    }
+}
+
 #[derive(Clone)]
-pub(super) struct Pixmap {
+pub struct Pixmap {
     pub width: i32,
     pub height: i32,
     pub rgba: Vec<u8>,
+}
+
+/// Records `event` in the items the tray shows; passive items are hidden.
+pub fn apply(items: &mut Vec<Item>, event: &Event) {
+    match event {
+        Event::Upsert(item) if item.status != "Passive" => {
+            match items.iter_mut().find(|current| current.id == item.id) {
+                Some(current) => *current = item.clone(),
+                None => items.push(item.clone()),
+            }
+        }
+        Event::Upsert(Item { id, .. }) | Event::Remove(id) => {
+            items.retain(|current| current.id != *id);
+        }
+    }
 }
 
 pub(super) fn tooltip(title: &str, text: &str) -> Option<String> {
@@ -204,6 +228,49 @@ mod tests {
             })
         );
         assert_eq!(ItemId::from_registration(""), None);
+    }
+
+    fn item(service: &str, status: &str) -> Item {
+        Item {
+            id: ItemId {
+                service: service.into(),
+                path: ITEM_PATH.into(),
+            },
+            status: status.into(),
+            tooltip: None,
+            icon_name: String::new(),
+            pixmaps: Arc::from([]),
+            item_is_menu: false,
+            menu_path: None,
+        }
+    }
+
+    #[test]
+    fn keeps_shown_items_in_order_and_hides_passive_ones() {
+        let services = |items: &[Item]| {
+            items
+                .iter()
+                .map(|item| (item.id.service.clone(), item.status.clone()))
+                .collect::<Vec<_>>()
+        };
+        let mut items = Vec::new();
+        apply(&mut items, &Event::Upsert(item("a", "Active")));
+        apply(&mut items, &Event::Upsert(item("b", "Active")));
+        apply(&mut items, &Event::Upsert(item("a", "NeedsAttention")));
+        assert_eq!(
+            services(&items),
+            [
+                ("a".into(), "NeedsAttention".into()),
+                ("b".into(), "Active".into())
+            ]
+        );
+
+        apply(&mut items, &Event::Upsert(item("a", "Passive")));
+        apply(&mut items, &Event::Upsert(item("c", "Passive")));
+        assert_eq!(services(&items), [("b".into(), "Active".into())]);
+
+        apply(&mut items, &Event::Remove(item("b", "Active").id));
+        assert!(items.is_empty());
     }
 
     #[test]

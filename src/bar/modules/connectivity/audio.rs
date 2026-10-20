@@ -3,41 +3,52 @@ use std::time::Duration;
 use gtk::glib;
 use gtk::prelude::*;
 
-use super::command::{
-    Refresh, StateClass, command, module, on_click, spawn_shell_then_refresh, watch,
-};
+use super::command::{Button, Refresh, Shown, command, on_click, spawn_shell_then_refresh, watch};
 use crate::background;
-use crate::bar::modules::open_floating;
+use crate::bar::{Msg, Updates, modules::open_floating};
 
 const INTERVAL: Duration = Duration::from_secs(30);
 const DEVICE_NAME_LIMIT: usize = 16;
 const VOLUME_BAR_WIDTH: usize = 10;
 
-pub fn audio() -> gtk::Button {
-    let (button, label) = module("audio");
-    let widget = button.clone();
-    let mut class = StateClass::new(&button);
-    let refresh = watch(INTERVAL, state, move |state| {
-        class.set(if state.muted { "muted" } else { "" });
-        label.set_text(state.text());
-        widget.set_tooltip_text(Some(&state.tooltip()));
-    });
-    subscribe(refresh.clone());
-    on_click(&button, {
-        let refresh = refresh.clone();
-        move |mouse_button| match mouse_button {
-            1 => open_floating("pavucontrol -t 3"),
-            2 => spawn_shell_then_refresh("dot-menu-audio-switcher --cycle", refresh.clone()),
-            3 => spawn_shell_then_refresh(
-                "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
-                refresh.clone(),
-            ),
-            _ => {}
-        }
-    });
-    on_scroll(&button, refresh);
+pub struct Audio {
+    refresh: Refresh,
+}
 
-    button
+impl Audio {
+    pub fn new(updates: &Updates) -> Self {
+        let refresh = watch(INTERVAL, state, {
+            let updates = updates.clone();
+            move |state| {
+                updates.send(Msg::Audio(Shown {
+                    class: if state.muted { "muted" } else { "" },
+                    text: state.text(),
+                    tooltip: state.tooltip(),
+                    visible: true,
+                }));
+            }
+        });
+        subscribe(refresh.clone());
+        Self { refresh }
+    }
+
+    pub fn widget(&self) -> Button {
+        let button = Button::new("audio");
+        on_click(&button.button, {
+            let refresh = self.refresh.clone();
+            move |mouse_button| match mouse_button {
+                1 => open_floating("pavucontrol -t 3"),
+                2 => spawn_shell_then_refresh("dot-menu-audio-switcher --cycle", refresh.clone()),
+                3 => spawn_shell_then_refresh(
+                    "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+                    refresh.clone(),
+                ),
+                _ => {}
+            }
+        });
+        on_scroll(&button.button, self.refresh.clone());
+        button
+    }
 }
 
 fn subscribe(refresh: Refresh) {

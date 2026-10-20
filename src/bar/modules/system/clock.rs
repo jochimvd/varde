@@ -18,71 +18,60 @@ const SHORT_MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
-pub fn date() -> gtk::Label {
-    let label = label("date");
-    let alternate = Rc::new(Cell::new(false));
-    let calendar = calendar_popover(&label);
-    update_date(&label, alternate.get());
-    glib::timeout_add_seconds_local(1, {
-        let label = label.clone();
-        let alternate = alternate.clone();
-        move || {
-            update_date(&label, alternate.get());
-            glib::ControlFlow::Continue
-        }
-    });
+/// One bar's date or time, which a right click switches to its alternate form.
+pub struct Clock {
+    pub label: gtk::Label,
+    alternate: Rc<Cell<bool>>,
+    update: fn(&gtk::Label, bool),
+}
 
+impl Clock {
+    pub fn show(&self) {
+        (self.update)(&self.label, self.alternate.get());
+    }
+}
+
+pub fn date() -> Clock {
+    let label = label("date");
+    let calendar = calendar_popover(&label);
     let click = gtk::GestureClick::new();
     click.set_button(1);
     click.connect_released(move |_, _, _, _| toggle_popover(&calendar));
     label.add_controller(click);
-
-    let alternate_click = gtk::GestureClick::new();
-    alternate_click.set_button(3);
-    alternate_click.connect_released({
-        let label = label.clone();
-        move |_, _, _, _| {
-            alternate.set(!alternate.get());
-            update_date(&label, alternate.get());
-        }
-    });
-    label.add_controller(alternate_click);
-
-    label
+    clock(label, update_date)
 }
 
-pub fn time() -> gtk::Label {
+pub fn time() -> Clock {
     let label = label("time");
-    let alternate = Rc::new(Cell::new(false));
     let world_clocks = world_clock_popover(&label);
-
-    update_time(&label, alternate.get());
-    glib::timeout_add_seconds_local(1, {
-        let label = label.clone();
-        let alternate = alternate.clone();
-        move || {
-            update_time(&label, alternate.get());
-            glib::ControlFlow::Continue
-        }
-    });
-
     let click = gtk::GestureClick::new();
     click.set_button(1);
     click.connect_released(move |_, _, _, _| toggle_popover(&world_clocks));
     label.add_controller(click);
+    clock(label, update_time)
+}
 
+fn clock(label: gtk::Label, update: fn(&gtk::Label, bool)) -> Clock {
+    let alternate = Rc::new(Cell::new(false));
     let alternate_click = gtk::GestureClick::new();
     alternate_click.set_button(3);
     alternate_click.connect_released({
-        let label = label.clone();
-        move |_, _, _, _| {
-            alternate.set(!alternate.get());
-            update_time(&label, alternate.get());
+        let alternate = alternate.clone();
+        move |click, _, _, _| {
+            if let Some(label) = click.widget().and_downcast::<gtk::Label>() {
+                alternate.set(!alternate.get());
+                update(&label, alternate.get());
+            }
         }
     });
     label.add_controller(alternate_click);
-
-    label
+    let clock = Clock {
+        label,
+        alternate,
+        update,
+    };
+    clock.show();
+    clock
 }
 
 fn label(name: &str) -> gtk::Label {
@@ -237,6 +226,10 @@ fn module_popover(label: &gtk::Label, content: &gtk::Box) -> gtk::Popover {
     popover.set_halign(gtk::Align::Center);
     popover.set_offset(0, POPOVER_TOP);
     popover.set_parent(label);
+    label.connect_destroy({
+        let popover = popover.clone();
+        move |_| popover.unparent()
+    });
     popover
 }
 
