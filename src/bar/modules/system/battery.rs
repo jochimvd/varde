@@ -7,30 +7,38 @@ use std::{
 use gtk::{glib, prelude::*};
 
 use super::set_critical;
+use crate::bar::{Msg, Updates};
 
 const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
-pub fn widget() -> Option<gtk::Label> {
-    let path = battery_path()?;
+/// Reads the battery, returning whether there is one.
+pub fn watch(updates: &Updates) -> bool {
+    let Some(path) = battery_path() else {
+        return false;
+    };
+    let updates = updates.clone();
+    let update = move || {
+        if let Some(current) = read(&path) {
+            updates.send(Msg::Battery(current));
+        }
+    };
+    update();
+    glib::timeout_add_local(UPDATE_INTERVAL, move || {
+        update();
+        glib::ControlFlow::Continue
+    });
+    true
+}
+
+pub fn widget() -> gtk::Label {
     let label = gtk::Label::new(None);
     label.set_widget_name("battery");
     label.add_css_class("battery");
-    update(&label, &path);
-    glib::timeout_add_local(UPDATE_INTERVAL, {
-        let label = label.clone();
-        move || {
-            update(&label, &path);
-            glib::ControlFlow::Continue
-        }
-    });
-    Some(label)
+    label
 }
 
-fn update(label: &gtk::Label, path: &Path) {
-    let Some(battery) = read(path) else {
-        return;
-    };
-    label.set_text(&format!("{} {:>2}%", icon(&battery), battery.capacity));
+pub fn show(label: &gtk::Label, battery: &Battery) {
+    label.set_text(&format!("{} {:>2}%", icon(battery), battery.capacity));
     label.set_tooltip_text(Some(&battery.tooltip()));
     label.remove_css_class("charging");
     if battery.status == "Charging" {
@@ -39,7 +47,8 @@ fn update(label: &gtk::Label, path: &Path) {
     set_critical(label, battery.capacity < 20 && battery.status != "Charging");
 }
 
-struct Battery {
+#[derive(Clone)]
+pub struct Battery {
     capacity: u8,
     status: String,
     power_watts: Option<f64>,

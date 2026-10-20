@@ -2,4 +2,5 @@ mod model;
 mod view;
 mod watcher;
 
-pub use view::widget;
+pub use model::{Event, Item, apply};
+pub use view::{Tray, Widget};

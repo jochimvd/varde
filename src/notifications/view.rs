@@ -3,7 +3,7 @@ mod center;
 mod common;
 mod popups;
 
-pub(super) use bell::Bell;
+pub use bell::{Bell, Indicator};
 pub(super) use center::Center;
 pub(super) use common::display_activation_token;
 pub(super) use popups::Popups;

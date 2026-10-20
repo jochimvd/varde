@@ -27,45 +27,53 @@ impl Refresh {
     }
 }
 
-pub(super) fn module(name: &str) -> (gtk::Button, gtk::Label) {
-    let button = gtk::Button::builder()
-        .focusable(false)
-        .valign(gtk::Align::Center)
-        .build();
-    button.set_cursor_from_name(Some("pointer"));
-    button.add_css_class("module");
-    button.add_css_class(name);
-
-    let label = gtk::Label::new(None);
-    button.set_child(Some(&label));
-    (button, label)
+/// What a module's button shows, the same on every bar.
+#[derive(Clone)]
+pub struct Shown {
+    pub(super) class: &'static str,
+    pub(super) text: &'static str,
+    pub(super) tooltip: String,
+    pub(super) visible: bool,
 }
 
-/// Applies a module's current state as a CSS class, removing the previous one.
-pub(super) struct StateClass {
-    button: gtk::Button,
-    current: String,
+/// One bar's button for a module.
+pub struct Button {
+    pub button: gtk::Button,
+    label: gtk::Label,
+    class: &'static str,
 }
 
-impl StateClass {
-    pub(super) fn new(button: &gtk::Button) -> Self {
+impl Button {
+    pub(super) fn new(name: &str) -> Self {
+        let button = gtk::Button::builder()
+            .focusable(false)
+            .valign(gtk::Align::Center)
+            .build();
+        button.set_cursor_from_name(Some("pointer"));
+        button.add_css_class("module");
+        button.add_css_class(name);
+        let label = gtk::Label::new(None);
+        button.set_child(Some(&label));
         Self {
-            button: button.clone(),
-            current: String::new(),
+            button,
+            label,
+            class: "",
         }
     }
 
-    pub(super) fn set(&mut self, state: &str) {
-        if state == self.current {
-            return;
+    pub fn show(&mut self, shown: &Shown) {
+        if shown.class != self.class {
+            if !self.class.is_empty() {
+                self.button.remove_css_class(self.class);
+            }
+            if !shown.class.is_empty() {
+                self.button.add_css_class(shown.class);
+            }
+            self.class = shown.class;
         }
-        if !self.current.is_empty() {
-            self.button.remove_css_class(&self.current);
-        }
-        if !state.is_empty() {
-            self.button.add_css_class(state);
-        }
-        self.current = state.into();
+        self.label.set_text(shown.text);
+        self.button.set_tooltip_text(Some(&shown.tooltip));
+        self.button.set_visible(shown.visible);
     }
 }
 

@@ -1,56 +1,78 @@
 use gtk::prelude::*;
 use zbus::blocking::{Connection, Proxy};
 
-use crate::background;
+use crate::{
+    background,
+    bar::{Msg, Updates},
+};
 
-pub fn widget() -> gtk::Button {
-    let button = gtk::Button::builder()
-        .focusable(false)
-        .valign(gtk::Align::Center)
-        .build();
-    button.set_cursor_from_name(Some("pointer"));
-    button.set_widget_name("idle_inhibitor");
-    button.add_css_class("module");
-    button.add_css_class("idle-inhibitor");
-    button.set_child(Some(&gtk::Label::new(Some("󰇘"))));
-    update(&button, false, None);
+/// Whether idle is inhibited, and why it could not be.
+#[derive(Clone, Default)]
+pub struct Inhibition {
+    active: bool,
+    error: Option<String>,
+}
 
-    let (toggles, requests) = async_channel::unbounded();
-    let (results, updates) = async_channel::unbounded();
-    background::listen(updates, {
-        let button = button.clone();
-        move |(active, error)| update(&button, active, error)
-    });
-    // The screensaver owner may be slow to activate, so never toggle on the main thread.
-    background::spawn("idle-inhibitor", move || {
-        let mut state = IdleInhibitor::default();
-        let result = state.activate();
-        if results
-            .send_blocking((state.cookie.is_some(), result.err()))
-            .is_err()
-        {
-            return;
-        }
+pub struct Idle {
+    toggles: async_channel::Sender<()>,
+}
 
-        while requests.recv_blocking().is_ok() {
-            let result = if state.cookie.is_some() {
-                state.deactivate()
-            } else {
-                state.activate()
-            };
+impl Idle {
+    pub fn new(updates: &Updates) -> Self {
+        let (toggles, requests) = async_channel::unbounded();
+        let (results, inhibitions) = async_channel::unbounded();
+        updates.forward(inhibitions, Msg::Idle);
+        // The screensaver owner may be slow to activate, so never toggle on the main thread.
+        background::spawn("idle-inhibitor", move || {
+            let mut state = IdleInhibitor::default();
+            let result = state.activate();
             if results
-                .send_blocking((state.cookie.is_some(), result.err()))
+                .send_blocking(Inhibition {
+                    active: state.cookie.is_some(),
+                    error: result.err(),
+                })
                 .is_err()
             {
-                break;
+                return;
             }
-        }
-    });
-    button.connect_clicked(move |_| {
-        let _ = toggles.try_send(());
-    });
 
-    button
+            while requests.recv_blocking().is_ok() {
+                let result = if state.cookie.is_some() {
+                    state.deactivate()
+                } else {
+                    state.activate()
+                };
+                if results
+                    .send_blocking(Inhibition {
+                        active: state.cookie.is_some(),
+                        error: result.err(),
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+        Self { toggles }
+    }
+
+    pub fn widget(&self) -> gtk::Button {
+        let button = gtk::Button::builder()
+            .focusable(false)
+            .valign(gtk::Align::Center)
+            .build();
+        button.set_cursor_from_name(Some("pointer"));
+        button.set_widget_name("idle_inhibitor");
+        button.add_css_class("module");
+        button.add_css_class("idle-inhibitor");
+        button.set_child(Some(&gtk::Label::new(Some("󰇘"))));
+        let toggles = self.toggles.clone();
+        button.connect_clicked(move |_| {
+            let _ = toggles.try_send(());
+        });
+
+        button
+    }
 }
 
 #[derive(Default)]
@@ -101,11 +123,15 @@ fn screensaver_proxy(connection: &Connection) -> Result<Proxy<'_>, String> {
     .map_err(|error| error.to_string())
 }
 
-fn update(button: &gtk::Button, active: bool, error: Option<String>) {
+pub fn show(button: &gtk::Button, inhibition: &Inhibition) {
     button.remove_css_class("activated");
     button.remove_css_class("deactivated");
-    button.add_css_class(if active { "activated" } else { "deactivated" });
-    let tooltip = match (active, error) {
+    button.add_css_class(if inhibition.active {
+        "activated"
+    } else {
+        "deactivated"
+    });
+    let tooltip = match (inhibition.active, &inhibition.error) {
         (true, _) => "Idle inhibition is active".to_string(),
         (false, Some(error)) => format!("Idle inhibition unavailable: {error}"),
         (false, None) => "Idle inhibition is inactive".to_string(),

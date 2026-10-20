@@ -53,7 +53,12 @@ fn main() -> glib::ExitCode {
     app.connect_activate({
         let notifications = notifications.clone();
         let title = title.clone();
-        move |app| bar::show(app, &notifications, &title)
+        let started = std::cell::Cell::new(false);
+        move |app| {
+            if !started.replace(true) {
+                bar::start(app, &notifications, &title);
+            }
+        }
     });
     app.connect_command_line({
         let launcher = launcher.clone();
@@ -119,7 +124,7 @@ fn handle_command_line(
         command::Request::Notifications => {
             app.activate();
             launcher.close();
-            notifications.toggle();
+            notifications.toggle(None);
         }
         command::Request::InvokeNotification => {
             return invoke_notification(app, command_line, launcher, notifications, false);

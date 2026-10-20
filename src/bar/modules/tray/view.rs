@@ -7,55 +7,80 @@ use std::{
 use gtk::prelude::*;
 
 use super::{
-    model::{
-        Event, ICON_SIZE, Item, ItemId, MenuItem, Pixmap, ToggleKind, scale_pixmap, select_pixmap,
-    },
+    model::{ICON_SIZE, Item, ItemId, MenuItem, Pixmap, ToggleKind, scale_pixmap, select_pixmap},
     watcher,
 };
-use crate::background;
+use crate::{
+    background,
+    bar::{Msg, Updates},
+};
 
 const MENU_OFFSET: i32 = 12;
 
-pub fn widget(menu_visibility: impl Fn(bool) + 'static) -> gtk::Box {
-    let tray = gtk::Box::builder().valign(gtk::Align::Center).build();
-    tray.set_widget_name("tray");
-    tray.add_css_class("tray");
+/// The tray items' connection, which every bar's tray acts through.
+pub struct Tray {
+    shared: watcher::SharedConnection,
+}
 
-    let (sender, receiver) = async_channel::unbounded();
-    let shared = watcher::SharedConnection::default();
-    let open_menus = Rc::new(Cell::new(0_u32));
-    let menu_visibility: Rc<dyn Fn(bool)> = Rc::new(menu_visibility);
-    let watcher_connection = shared.clone();
-    background::spawn("tray-watcher", move || {
-        watcher::run(sender, watcher_connection)
-    });
-    background::listen(receiver, {
-        let tray = tray.clone();
-        let mut entries = Vec::<Entry>::new();
-        move |event| match event {
-            Event::Upsert(item) => {
-                let index = entries.iter().position(|entry| entry.id == item.id);
-                if item.status == "Passive" {
-                    if let Some(index) = index {
-                        entries.remove(index).destroy(&tray);
-                    }
-                } else if let Some(index) = index {
-                    entries[index].update(&item);
-                } else {
-                    let entry = Entry::new(&item, &shared, &open_menus, &menu_visibility);
-                    tray.append(&entry.target);
-                    entries.push(entry);
-                }
-            }
-            Event::Remove(id) => {
-                if let Some(index) = entries.iter().position(|entry| entry.id == id) {
-                    entries.remove(index).destroy(&tray);
+impl Tray {
+    pub fn new(updates: &Updates) -> Self {
+        let (sender, receiver) = async_channel::unbounded();
+        let shared = watcher::SharedConnection::default();
+        let watcher_connection = shared.clone();
+        background::spawn("tray-watcher", move || {
+            watcher::run(sender, watcher_connection)
+        });
+        updates.forward(receiver, Msg::Tray);
+        Self { shared }
+    }
+
+    pub fn widget(&self, menu_visibility: impl Fn(bool) + 'static) -> Widget {
+        let root = gtk::Box::builder().valign(gtk::Align::Center).build();
+        root.set_widget_name("tray");
+        root.add_css_class("tray");
+        Widget {
+            root,
+            entries: Vec::new(),
+            shared: self.shared.clone(),
+            open_menus: Rc::default(),
+            menu_visibility: Rc::new(menu_visibility),
+        }
+    }
+}
+
+/// One bar's tray icons.
+pub struct Widget {
+    pub root: gtk::Box,
+    entries: Vec<Entry>,
+    shared: watcher::SharedConnection,
+    open_menus: Rc<Cell<u32>>,
+    menu_visibility: Rc<dyn Fn(bool)>,
+}
+
+impl Widget {
+    /// Shows `items`, refreshing the entry of the `changed` one; the other
+    /// entries are kept as they are so their open menus survive.
+    pub fn show(&mut self, items: &[Item], changed: Option<&ItemId>) {
+        let (kept, gone) = std::mem::take(&mut self.entries)
+            .into_iter()
+            .partition::<Vec<_>, _>(|entry| items.iter().any(|item| item.id == entry.id));
+        for entry in gone {
+            entry.destroy(&self.root);
+        }
+        self.entries = kept;
+        for item in items {
+            match self.entries.iter().find(|entry| entry.id == item.id) {
+                Some(entry) if changed == Some(&item.id) => entry.update(item),
+                Some(_) => {}
+                None => {
+                    let entry =
+                        Entry::new(item, &self.shared, &self.open_menus, &self.menu_visibility);
+                    self.root.append(&entry.target);
+                    self.entries.push(entry);
                 }
             }
         }
-    });
-
-    tray
+    }
 }
 
 /// The widgets for one tray item, kept across updates so an open menu

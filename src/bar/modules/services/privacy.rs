@@ -17,7 +17,10 @@ use std::{
 use gtk::prelude::*;
 use serde_json::Value;
 
-use crate::background;
+use crate::{
+    background,
+    bar::{Msg, Updates},
+};
 
 const ICON_SIZE: i32 = 14;
 const ICON_GAP: i32 = 7;
@@ -29,7 +32,63 @@ const DIRECTORY_EVENTS: u32 = libc::IN_CREATE | libc::IN_DELETE | libc::IN_ATTRI
 const DEVICE_EVENTS: u32 = libc::IN_OPEN | libc::IN_CLOSE_WRITE | libc::IN_CLOSE_NOWRITE;
 const SETTLE_DELAY: Duration = Duration::from_millis(100);
 
-pub fn widget() -> gtk::Box {
+/// Reports which applications use the camera, microphone, or screen.
+pub fn start(updates: &Updates) {
+    let (sender, receiver) = async_channel::unbounded();
+    updates.forward(receiver, Msg::Privacy);
+    let camera_sender = sender.clone();
+    background::spawn("privacy-monitor", move || {
+        while monitor(&sender) {
+            thread::sleep(background::RETRY_DELAY);
+        }
+    });
+    background::spawn("camera-monitor", move || {
+        monitor_direct_cameras(&camera_sender)
+    });
+}
+
+/// What PipeWire and the camera devices last reported, and what they add up to.
+#[derive(Default)]
+pub struct Sources {
+    pipewire: State,
+    direct_cameras: Vec<String>,
+    shown: State,
+}
+
+impl Sources {
+    /// Records `change`, returning whether what is shown changed.
+    pub fn apply(&mut self, change: &Change) -> bool {
+        match change {
+            Change::PipeWire(next) => self.pipewire = next.clone(),
+            Change::DirectCameras(cameras) => self.direct_cameras = cameras.clone(),
+        }
+        let next = merged_state(&self.pipewire, &self.direct_cameras);
+        if next == self.shown {
+            return false;
+        }
+        self.shown = next;
+        true
+    }
+
+    pub fn shown(&self) -> &State {
+        &self.shown
+    }
+}
+
+/// One bar's privacy indicator.
+pub struct Widget {
+    pub root: gtk::Box,
+    icons: gtk::Box,
+    revealer: gtk::Revealer,
+}
+
+impl Widget {
+    pub fn show(&self, state: &State) {
+        update(&self.root, &self.icons, &self.revealer, state);
+    }
+}
+
+pub fn widget() -> Widget {
     let privacy = gtk::Box::builder()
         .valign(gtk::Align::Center)
         .visible(false)
@@ -61,13 +120,17 @@ pub fn widget() -> gtk::Box {
     let hover_intent = crate::bar::HoverIntent::default();
     let pointer_inside = Rc::new(Cell::new(false));
     let hover = gtk::EventControllerMotion::new();
+    // The hover controller lives on the privacy widget, so it holds it weakly.
     let update_hover = Rc::new({
-        let privacy = privacy.clone();
+        let privacy = privacy.downgrade();
         let pill = pill.clone();
         let revealer = revealer.clone();
         let hover_intent = hover_intent.clone();
         let pointer_inside = pointer_inside.clone();
         move |x: f64, y: f64| {
+            let Some(privacy) = privacy.upgrade() else {
+                return;
+            };
             let inside = !privacy.has_css_class("collapsed")
                 || pill.compute_bounds(&privacy).is_some_and(|bounds| {
                     let half = COLLAPSED_HOVER_SIZE / 2.0;
@@ -96,14 +159,16 @@ pub fn widget() -> gtk::Box {
     });
     hover.connect_motion(move |_, x, y| update_hover(x, y));
     hover.connect_leave({
-        let privacy = privacy.clone();
+        let privacy = privacy.downgrade();
         let revealer = revealer.clone();
         let hover_intent = hover_intent.clone();
         let pointer_inside = pointer_inside.clone();
         move |_| {
             pointer_inside.set(false);
             hover_intent.leave();
-            let privacy = privacy.clone();
+            let Some(privacy) = privacy.upgrade() else {
+                return;
+            };
             let revealer = revealer.clone();
             hover_intent.retract(move || {
                 set_expanded(&privacy, &revealer, false);
@@ -112,42 +177,15 @@ pub fn widget() -> gtk::Box {
     });
     privacy.add_controller(hover);
 
-    let (sender, receiver) = async_channel::unbounded();
-    background::listen(receiver, {
-        let privacy = privacy.clone();
-        let icons = icons.clone();
-        let revealer = revealer.clone();
-        let mut pipewire = State::default();
-        let mut direct_cameras = Vec::new();
-        let mut current = State::default();
-        move |change| {
-            match change {
-                Change::PipeWire(state) => pipewire = state,
-                Change::DirectCameras(cameras) => direct_cameras = cameras,
-            }
-            let state = merged_state(&pipewire, &direct_cameras);
-            if state != current {
-                update(&privacy, &icons, &revealer, &state);
-                current = state;
-            }
-        }
-    });
-
-    let camera_sender = sender.clone();
-    background::spawn("privacy-monitor", move || {
-        while monitor(&sender) {
-            thread::sleep(background::RETRY_DELAY);
-        }
-    });
-    background::spawn("camera-monitor", move || {
-        monitor_direct_cameras(&camera_sender)
-    });
-
-    privacy
+    Widget {
+        root: privacy,
+        icons,
+        revealer,
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct State {
+pub struct State {
     cameras: Vec<String>,
     screen_shares: Vec<String>,
     microphones: Vec<String>,
@@ -168,7 +206,7 @@ impl State {
     }
 }
 
-enum Change {
+pub enum Change {
     PipeWire(State),
     DirectCameras(Vec<String>),
 }
@@ -620,6 +658,22 @@ mod tests {
         let state = merged_state(&pipewire, &["Webcam A".into(), "Webcam C".into()]);
 
         assert_eq!(state.cameras, ["Webcam A", "Webcam B", "Webcam C"]);
+    }
+
+    #[test]
+    fn shows_merged_sources_only_when_they_change() {
+        let mut sources = Sources::default();
+        let pipewire = State {
+            cameras: vec!["Webcam".into()],
+            ..State::default()
+        };
+
+        assert!(sources.apply(&Change::PipeWire(pipewire)));
+        assert!(!sources.apply(&Change::DirectCameras(vec!["Webcam".into()])));
+        assert!(!sources.apply(&Change::PipeWire(State::default())));
+        assert_eq!(sources.shown().cameras, ["Webcam"]);
+        assert!(sources.apply(&Change::DirectCameras(Vec::new())));
+        assert_eq!(sources.shown(), &State::default());
     }
 
     #[test]

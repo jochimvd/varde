@@ -1,42 +1,40 @@
-use std::{cell::Cell, fs, rc::Rc};
+use std::fs;
 
 use gtk::{glib, prelude::*};
 
 use super::set_critical;
-use crate::bar::modules::open_floating;
+use crate::bar::{Msg, Updates, modules::open_floating};
 
 const UPDATE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Samples CPU usage and memory.
+pub fn watch(updates: &Updates) {
+    updates.send(Msg::Cpu(CpuUsage::new(0)));
+    if let Some(current) = read_memory() {
+        updates.send(Msg::Memory(current));
+    }
+    let mut previous = read_cpu().unwrap_or_default();
+    let updates = updates.clone();
+    glib::timeout_add_local(UPDATE_INTERVAL, move || {
+        if let Some(current) = read_cpu() {
+            updates.send(Msg::Cpu(CpuUsage::new(cpu_usage(previous, current))));
+            previous = current;
+        }
+        if let Some(current) = read_memory() {
+            updates.send(Msg::Memory(current));
+        }
+        glib::ControlFlow::Continue
+    });
+}
+
 pub fn cpu() -> gtk::Label {
     let label = label("cpu");
-    let previous = Rc::new(Cell::new(read_cpu().unwrap_or_default()));
-    update_cpu(&label, 0);
-    glib::timeout_add_local(UPDATE_INTERVAL, {
-        let label = label.clone();
-        let previous = previous.clone();
-        move || {
-            if let Some(current) = read_cpu() {
-                let usage = cpu_usage(previous.get(), current);
-                previous.set(current);
-                update_cpu(&label, usage);
-            }
-            glib::ControlFlow::Continue
-        }
-    });
     launch_btop_on_click(&label);
     label
 }
 
 pub fn memory() -> gtk::Label {
     let label = label("memory");
-    update_memory(&label);
-    glib::timeout_add_local(UPDATE_INTERVAL, {
-        let label = label.clone();
-        move || {
-            update_memory(&label);
-            glib::ControlFlow::Continue
-        }
-    });
     launch_btop_on_click(&label);
     label
 }
@@ -48,10 +46,26 @@ fn label(name: &str) -> gtk::Label {
     label
 }
 
-fn update_cpu(label: &gtk::Label, usage: u8) {
-    label.set_text(&format!("󰍛 {usage:>2}%"));
-    label.set_tooltip_text(Some(&cpu_tooltip()));
-    set_critical(label, usage >= 90);
+/// CPU usage, with the load average at the time.
+#[derive(Clone)]
+pub struct CpuUsage {
+    percent: u8,
+    tooltip: String,
+}
+
+impl CpuUsage {
+    fn new(percent: u8) -> Self {
+        Self {
+            percent,
+            tooltip: cpu_tooltip(),
+        }
+    }
+}
+
+pub fn show_cpu(label: &gtk::Label, usage: &CpuUsage) {
+    label.set_text(&format!("󰍛 {:>2}%", usage.percent));
+    label.set_tooltip_text(Some(&usage.tooltip));
+    set_critical(label, usage.percent >= 90);
 }
 
 fn cpu_tooltip() -> String {
@@ -66,16 +80,14 @@ fn load_average() -> Option<String> {
     (values.len() == 3).then(|| values.join("  "))
 }
 
-fn update_memory(label: &gtk::Label) {
-    if let Some(memory) = read_memory() {
-        label.set_text(&format!("󰘚 {:>2}%", memory.percentage));
-        label.set_tooltip_text(Some(&format!(
-            "{:.1} / {:.1} GiB",
-            memory.used as f64 / 1024.0 / 1024.0,
-            memory.total as f64 / 1024.0 / 1024.0
-        )));
-        set_critical(label, memory.percentage >= 80);
-    }
+pub fn show_memory(label: &gtk::Label, memory: &Memory) {
+    label.set_text(&format!("󰘚 {:>2}%", memory.percentage));
+    label.set_tooltip_text(Some(&format!(
+        "{:.1} / {:.1} GiB",
+        memory.used as f64 / 1024.0 / 1024.0,
+        memory.total as f64 / 1024.0 / 1024.0
+    )));
+    set_critical(label, memory.percentage >= 80);
 }
 
 fn launch_btop_on_click(label: &gtk::Label) {
@@ -124,7 +136,8 @@ fn cpu_usage(previous: Cpu, current: Cpu) -> u8 {
         as u8
 }
 
-struct Memory {
+#[derive(Clone)]
+pub struct Memory {
     total: u64,
     used: u64,
     percentage: u8,

@@ -11,7 +11,8 @@ use std::{cell::RefCell, rc::Rc};
 
 use model::Snapshot;
 use state::Action;
-use view::{Bell, Center, Popups};
+pub use view::{Bell, Indicator};
+use view::{Center, Popups};
 
 /// The notification that keyboard commands act on, with its actions.
 pub struct Target {
@@ -48,10 +49,12 @@ fn label(action: &Action) -> &str {
     }
 }
 
+type Listener = Box<dyn Fn(Indicator)>;
+
 pub struct Manager {
     snapshot: RefCell<Snapshot>,
-    bell: RefCell<Option<Bell>>,
-    center_anchor: RefCell<Option<gtk::ApplicationWindow>>,
+    app: RefCell<Option<gtk::Application>>,
+    indicator: RefCell<Option<Listener>>,
     center: RefCell<Option<Center>>,
     popups: RefCell<Option<Popups>>,
     daemon: RefCell<Option<daemon::Control>>,
@@ -61,8 +64,8 @@ impl Manager {
     pub fn new() -> Rc<Self> {
         Rc::new(Self {
             snapshot: RefCell::new(Snapshot::unavailable()),
-            bell: RefCell::new(None),
-            center_anchor: RefCell::new(None),
+            app: RefCell::new(None),
+            indicator: RefCell::default(),
             center: RefCell::new(None),
             popups: RefCell::new(None),
             daemon: RefCell::new(None),
@@ -70,6 +73,7 @@ impl Manager {
     }
 
     pub fn start(self: &Rc<Self>, app: &gtk::Application) {
+        self.app.replace(Some(app.clone()));
         self.popups.replace(Some(Popups::new(app, self)));
         let (changes, views) = async_channel::bounded(1);
         let Some(daemon) = daemon::start(changes, persist::load()) else {
@@ -93,22 +97,14 @@ impl Manager {
         }
     }
 
-    pub fn button(self: &Rc<Self>) -> gtk::Button {
-        if self.bell.borrow().is_none() {
-            let bell = Bell::new(self);
-            bell.update(&self.snapshot.borrow(), self.center_open());
-            self.bell.replace(Some(bell));
-        }
-        self.bell
-            .borrow()
-            .as_ref()
-            .expect("bell was just constructed")
-            .button
-            .clone()
+    /// Calls `listener` with what the bars' buttons show, now and on every change.
+    pub fn connect(&self, listener: impl Fn(Indicator) + 'static) {
+        listener(Indicator::new(&self.snapshot.borrow()));
+        self.indicator.replace(Some(Box::new(listener)));
     }
 
-    pub fn set_center_anchor(&self, anchor: &gtk::ApplicationWindow) {
-        self.center_anchor.replace(Some(anchor.clone()));
+    pub fn bell(self: &Rc<Self>) -> Bell {
+        Bell::new(self)
     }
 
     pub fn close(&self) {
@@ -117,9 +113,6 @@ impl Manager {
         }
         if let Some(center) = self.center.borrow().as_ref() {
             center.hide();
-        }
-        if let Some(bell) = self.bell.borrow().as_ref() {
-            bell.update(&self.snapshot.borrow(), false);
         }
         if let Some(popups) = self.popups.borrow().as_ref() {
             popups.update(&self.snapshot.borrow(), false);
@@ -199,22 +192,30 @@ impl Manager {
         }
     }
 
-    pub fn toggle(self: &Rc<Self>) {
+    /// Opens the center on `monitor`, or on the focused one, or closes it if
+    /// it is open there already.
+    pub fn toggle(self: &Rc<Self>, monitor: Option<&gtk::gdk::Monitor>) {
         if self.center_open() {
+            let elsewhere = monitor.is_some_and(|monitor| {
+                self.center
+                    .borrow()
+                    .as_ref()
+                    .and_then(Center::monitor)
+                    .as_ref()
+                    != Some(monitor)
+            });
             self.close();
-            return;
-        }
-        if let Some(bell) = self.bell.borrow().as_ref() {
-            bell.update(&self.snapshot.borrow(), true);
+            if !elsewhere {
+                return;
+            }
         }
         if self.center.borrow().is_none() {
-            let anchor = self
-                .center_anchor
+            let app = self
+                .app
                 .borrow()
-                .as_ref()
-                .expect("the bar creates the notification center anchor before opening it")
-                .clone();
-            let center = Center::new(&anchor, self, self.daemon.borrow().is_some());
+                .clone()
+                .expect("the manager starts before the center opens");
+            let center = Center::new(&app, self, self.daemon.borrow().is_some());
             center.update(&self.snapshot.borrow());
             self.center.replace(Some(center));
         }
@@ -222,17 +223,17 @@ impl Manager {
             .borrow()
             .as_ref()
             .expect("center was just constructed")
-            .show(&self.snapshot.borrow());
+            .show(&self.snapshot.borrow(), monitor);
         if let Some(popups) = self.popups.borrow().as_ref() {
             popups.hide();
         }
     }
 
     fn apply(&self, snapshot: Snapshot) {
-        let center_open = self.center_open();
-        if let Some(bell) = self.bell.borrow().as_ref() {
-            bell.update(&snapshot, center_open);
+        if let Some(listener) = self.indicator.borrow().as_ref() {
+            listener(Indicator::new(&snapshot));
         }
+        let center_open = self.center_open();
         if let Some(center) = self.center.borrow().as_ref() {
             center.update(&snapshot);
         }

@@ -37,7 +37,6 @@ type Seen = HashSet<(u32, u64)>;
 pub(in crate::notifications) struct Center {
     window: gtk::ApplicationWindow,
     backdrop: gtk::ApplicationWindow,
-    anchor: gtk::ApplicationWindow,
     scroll: gtk::ScrolledWindow,
     list: gtk::Box,
     stack: gtk::Stack,
@@ -51,12 +50,9 @@ pub(in crate::notifications) struct Center {
 }
 
 impl Center {
-    pub fn new(anchor: &gtk::ApplicationWindow, manager: &Rc<Manager>, interactive: bool) -> Self {
-        let app = anchor
-            .application()
-            .expect("the bar belongs to the application");
+    pub fn new(app: &gtk::Application, manager: &Rc<Manager>, interactive: bool) -> Self {
         let backdrop = gtk::ApplicationWindow::builder()
-            .application(&app)
+            .application(app)
             .name(BACKDROP_NAME)
             .build();
         backdrop.add_css_class("notification-backdrop");
@@ -88,7 +84,7 @@ impl Center {
         backdrop.set_child(Some(&area));
 
         let window = gtk::ApplicationWindow::builder()
-            .application(&app)
+            .application(app)
             .name(CENTER_NAME)
             .resizable(false)
             .build();
@@ -199,7 +195,6 @@ impl Center {
         Self {
             window,
             backdrop,
-            anchor: anchor.clone(),
             scroll,
             list,
             stack,
@@ -217,7 +212,8 @@ impl Center {
         self.render(snapshot, !self.is_visible());
     }
 
-    pub fn show(&self, snapshot: &Snapshot) {
+    /// Opens on `monitor`, or where the compositor puts new surfaces.
+    pub fn show(&self, snapshot: &Snapshot, monitor: Option<&gdk::Monitor>) {
         self.seen.replace(
             snapshot
                 .groups
@@ -228,14 +224,9 @@ impl Center {
         );
         self.render(snapshot, true);
         self.scroll.vadjustment().set_value(0.0);
-        // On the bar's monitor, with the backdrop mapped first so the panel
-        // stacks above it.
-        let monitor = self
-            .anchor
-            .surface()
-            .and_then(|surface| surface.display().monitor_at_surface(&surface));
+        // The backdrop maps first so the panel stacks above it.
         for window in [&self.backdrop, &self.window] {
-            window.set_monitor(monitor.as_ref());
+            window.set_monitor(monitor);
             window.present();
         }
         self.refresh_after_layout();
@@ -253,6 +244,12 @@ impl Center {
 
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()
+    }
+
+    /// The monitor the open center is on.
+    pub fn monitor(&self) -> Option<gdk::Monitor> {
+        let surface = self.window.surface().filter(|_| self.is_visible())?;
+        surface.display().monitor_at_surface(&surface)
     }
 
     fn render(&self, snapshot: &Snapshot, reset_order: bool) {
