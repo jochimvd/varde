@@ -124,8 +124,10 @@ pub(super) fn valid_pixmaps(pixmaps: Vec<(i32, i32, Vec<u8>)>) -> Arc<[Pixmap]> 
             width,
             height,
             rgba: argb
-                .chunks_exact(4)
-                .flat_map(|pixel| [pixel[1], pixel[2], pixel[3], pixel[0]])
+                .as_chunks()
+                .0
+                .iter()
+                .flat_map(|&[a, r, g, b]| [r, g, b, a])
                 .collect(),
         })
         .collect()

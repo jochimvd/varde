@@ -161,7 +161,7 @@ fn tight_rgba(pixbuf: &Pixbuf) -> Option<Thumbnail> {
         let target = &mut bytes[y * rowstride..(y + 1) * rowstride];
         for (source, target) in source
             .chunks_exact(channels)
-            .zip(target.chunks_exact_mut(4))
+            .zip(target.as_chunks_mut::<4>().0)
         {
             target[..3].copy_from_slice(&source[..3]);
             target[3] = source.get(3).copied().unwrap_or(255);
