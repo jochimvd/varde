@@ -120,7 +120,10 @@ impl GroupView {
             dismiss.connect_released({
                 let manager = manager.clone();
                 let notifications = Rc::clone(&notifications);
-                move |_, _, _, _| {
+                move |dismiss, _, x, y| {
+                    if !dismiss.widget().is_some_and(|header| header.contains(x, y)) {
+                        return;
+                    }
                     if let Some(manager) = manager.upgrade() {
                         manager.dismiss_group(notifications.borrow().clone());
                     }

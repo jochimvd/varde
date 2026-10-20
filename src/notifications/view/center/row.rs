@@ -150,10 +150,14 @@ impl RowView {
                 let manager = manager.clone();
                 let id = Rc::clone(&id);
                 let actionable = Rc::clone(&actionable);
-                move |click, _, _, _| {
+                move |click, _, x, y| {
                     let Some(manager) = manager.upgrade() else {
                         return;
                     };
+                    // Like a button, releasing away from the row cancels the click.
+                    if !click.widget().is_some_and(|row| row.contains(x, y)) {
+                        return;
+                    }
                     match click.current_button() {
                         gdk::BUTTON_SECONDARY => manager.dismiss(id.get()),
                         gdk::BUTTON_PRIMARY if actionable.get() => {
