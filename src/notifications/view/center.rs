@@ -234,12 +234,14 @@ impl Center {
     }
 
     pub fn hide(&self) {
-        self.window.set_visible(false);
-        // Hyprland keeps keyboard focus on a layer's surface across remaps
-        // without announcing it again, while GTK drops it on hide; a fresh
-        // surface gets the focus announced.
-        WidgetExt::unrealize(&self.window);
-        self.backdrop.set_visible(false);
+        // Both windows get fresh surfaces. Hyprland keeps keyboard focus on a
+        // layer's surface across remaps without announcing it again, while GTK
+        // drops it on hide; a fresh surface gets the focus announced. Showing
+        // a kept surface again trips GDK's frame timing check.
+        for window in [&self.window, &self.backdrop] {
+            window.set_visible(false);
+            WidgetExt::unrealize(window);
+        }
     }
 
     pub fn is_visible(&self) -> bool {
