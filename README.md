@@ -4,7 +4,16 @@ A small, personal desktop shell for Hyprland, written in Rust with GTK 4.
 
 ![Varde application launcher](docs/images/varde-launcher.png)
 
-![Varde notification center](docs/images/varde-notifications.png)
+<details>
+<summary>More screenshots</summary>
+
+![Varde clipboard history with an image preview](docs/images/varde-clipboard.png)
+
+![Varde calendar popover and notification popups](docs/images/varde-popups.png)
+
+![Varde notification center with grouped, critical, progress, and media notifications](docs/images/varde-notifications.png)
+
+</details>
 
 Varde provides a status bar, application, action, and clipboard launchers,
 notifications, workspace controls, system status, idle inhibition, privacy
