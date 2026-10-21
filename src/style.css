@@ -141,7 +141,7 @@ window.notification-backdrop {
 .notification-center {
     padding: 8px;
     border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
+    border-radius: 5px;
     background: @surface_color;
 }
 
@@ -347,7 +347,7 @@ tooltip {
     color: @primary_color;
     background: @surface_low_color;
     border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
+    border-radius: 5px;
 }
 
 window.launcher {
@@ -470,7 +470,7 @@ window.notification-popups {
 .notification-popup {
     padding: 10px 12px;
     border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
+    border-radius: 5px;
     background: @surface_color;
 }
 
@@ -557,7 +557,7 @@ window.notification-popups {
 .notification-center-control {
     margin: 3px 0;
     padding: 5px 10px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_secondary_color;
     background: @overlay_subtle_color;
 }
@@ -584,7 +584,7 @@ window.notification-popups {
 }
 
 .notification-group {
-    border-radius: 6px;
+    border-radius: 5px;
     background: @overlay_subtle_color;
 }
 
@@ -602,7 +602,7 @@ window.notification-popups {
     font-family: 'JetBrainsMono Nerd Font Propo';
     min-height: 30px;
     padding: 2px 6px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_secondary_color;
 }
 
@@ -639,7 +639,7 @@ window.notification-popups {
 
 .notification-row-surface {
     margin: 2px;
-    border-radius: 6px;
+    border-radius: 5px;
 }
 
 .notification-row-surface.content-hover {
@@ -648,7 +648,7 @@ window.notification-popups {
 
 .notification-content {
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: 5px;
 }
 
 .notification-row.critical,
@@ -689,7 +689,7 @@ window.notification-popups {
     padding: 0;
     min-width: 30px;
     min-height: 30px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_muted_color;
 }
 
@@ -713,7 +713,7 @@ window.notification-popups {
 
 .notification-action {
     padding: 4px 9px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @primary_color;
     background: @overlay_subtle_color;
 }
@@ -724,7 +724,7 @@ window.notification-popups {
 
 .notification-center-empty {
     min-height: 98px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_muted_color;
     background: @overlay_subtle_color;
 }
