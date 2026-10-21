@@ -436,7 +436,7 @@ window.launcher scrollbar {
 
 window.launcher .launcher-results-scroll > scrollbar {
     opacity: 1;
-    padding: 4px 3px;
+    padding: 0;
     border: none;
     background: transparent;
 }
@@ -446,7 +446,7 @@ window.launcher .launcher-results-scroll > scrollbar slider {
     min-height: 24px;
     margin: 0;
     border: none;
-    border-radius: 2px;
+    border-radius: 0;
     background: @overlay_strong_color;
 }
 
