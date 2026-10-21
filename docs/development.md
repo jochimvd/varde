@@ -64,7 +64,8 @@ Session IDs start with a lowercase letter, contain lowercase letters, digits,
 or hyphens, and are at most 32 characters long. Each session has its own lock,
 compositor, Wayland socket, notification bus, GTK application ID, host
 workspace, working directory, and screenshot path. Runtime metadata lives at
-`$XDG_RUNTIME_DIR/varde-dev/<session>/session` and is removed on exit.
+`$XDG_RUNTIME_DIR/varde-dev/<session>/session` and is removed on exit, along
+with the nested compositor's `$XDG_RUNTIME_DIR/hypr/<instance>` directory.
 
 The nested session shares live tray, audio, network, Bluetooth, and idle
 services. Interacting with those modules can therefore affect the live desktop.
