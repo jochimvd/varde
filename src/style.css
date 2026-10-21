@@ -354,10 +354,14 @@ window.launcher {
 }
 
 .launcher-panel {
-    border: 1px solid @overlay_strong_color;
     border-radius: 5px;
     background: transparent;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    /* The panel is transparent, so the ring stacks the notification center's
+       border over its surface to get the same shade. */
+    box-shadow:
+        0 4px 16px rgba(0, 0, 0, 0.35),
+        0 0 0 1px @surface_color,
+        0 0 0 1px @overlay_strong_color;
 }
 
 .launcher-input {
