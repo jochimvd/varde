@@ -442,12 +442,12 @@ window.launcher .launcher-results-scroll > scrollbar {
 }
 
 window.launcher .launcher-results-scroll > scrollbar slider {
-    min-width: 3px;
+    min-width: 4px;
     min-height: 24px;
     margin: 0;
     border: none;
     border-radius: 0;
-    background: @overlay_strong_color;
+    background: alpha(@primary_color, 0.15);
 }
 
 window.notification-popups {
