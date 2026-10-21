@@ -44,17 +44,18 @@ hl.config({
     },
 })
 
-for _, namespace in ipairs({
-    "varde",
-    "varde-launcher",
-    "varde-notification-center",
-    "varde-notification-popups",
+for namespace, ignore_alpha in pairs({
+    ["varde"] = 0.1,
+    -- Above the launcher shadow's densest edge, so only the panel is blurred.
+    ["varde-launcher"] = 0.3,
+    ["varde-notification-center"] = 0.1,
+    ["varde-notification-popups"] = 0.1,
 }) do
     hl.layer_rule({
         match = { namespace = namespace },
         blur = true,
         blur_popups = true,
-        ignore_alpha = 0.1,
+        ignore_alpha = ignore_alpha,
     })
 end
 
