@@ -1,6 +1,7 @@
 @define-color primary_color #FFFFFF;
 @define-color tertiary_color #595959;
 @define-color accent_color #9ECE6A;
+@define-color bell_dot_color alpha(@accent_color, 0.7);
 @define-color critical_color #F38BA8;
 @define-color surface_color rgba(0, 0, 0, 0.8);
 @define-color surface_low_color rgba(0, 0, 0, 0.7);

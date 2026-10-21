@@ -153,7 +153,7 @@ fn draw_icon(
         return;
     }
     #[allow(deprecated)]
-    let Some(accent) = icon.style_context().lookup_color("accent_color") else {
+    let Some(dot) = icon.style_context().lookup_color("bell_dot_color") else {
         return;
     };
 
@@ -165,10 +165,10 @@ fn draw_icon(
 
     context.set_operator(cairo::Operator::Over);
     context.set_source_rgba(
-        f64::from(accent.red()),
-        f64::from(accent.green()),
-        f64::from(accent.blue()),
-        f64::from(accent.alpha()),
+        f64::from(dot.red()),
+        f64::from(dot.green()),
+        f64::from(dot.blue()),
+        f64::from(dot.alpha()),
     );
     context.arc(dot_x, dot_y, DOT_RADIUS, 0.0, TAU);
     let _ = context.fill();
