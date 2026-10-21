@@ -354,6 +354,7 @@ window.launcher {
 }
 
 .launcher-panel {
+    border: 1px solid @overlay_strong_color;
     border-radius: 5px;
     background: transparent;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
