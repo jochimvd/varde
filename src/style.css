@@ -434,6 +434,22 @@ window.launcher scrollbar {
     opacity: 0;
 }
 
+window.launcher .launcher-results-scroll > scrollbar {
+    opacity: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+window.launcher .launcher-results-scroll > scrollbar slider {
+    min-width: 4px;
+    min-height: 24px;
+    margin: 0;
+    border: none;
+    border-radius: 0;
+    background: alpha(@primary_color, 0.15);
+}
+
 window.notification-popups {
     font-family: 'JetBrainsMono Nerd Font';
     font-size: 14px;

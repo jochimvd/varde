@@ -124,9 +124,11 @@ impl Launcher {
         let scroll = gtk::ScrolledWindow::builder()
             .child(&list)
             .hscrollbar_policy(gtk::PolicyType::Never)
+            .overlay_scrolling(false)
             .max_content_height(ROW_HEIGHT * VISIBLE_ROWS)
             .propagate_natural_height(true)
             .build();
+        scroll.add_css_class("launcher-results-scroll");
         scroll.vadjustment().connect_value_changed({
             let manager = Rc::downgrade(manager);
             move |_| {
