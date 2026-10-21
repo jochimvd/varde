@@ -145,6 +145,10 @@ window.notification-backdrop {
     background: @surface_color;
 }
 
+.notification-center {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
 .world-clock-title {
     padding: 2px;
     font-weight: bold;

@@ -46,9 +46,9 @@ hl.config({
 
 for namespace, ignore_alpha in pairs({
     ["varde"] = 0.1,
-    -- Above the launcher shadow's densest edge, so only the panel is blurred.
+    -- Above the panel shadows' densest edge, so only the panels are blurred.
     ["varde-launcher"] = 0.3,
-    ["varde-notification-center"] = 0.1,
+    ["varde-notification-center"] = 0.3,
     ["varde-notification-popups"] = 0.1,
 }) do
     hl.layer_rule({

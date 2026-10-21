@@ -20,6 +20,8 @@ use super::{
 const CENTER_NAME: &str = "varde-notification-center";
 const BACKDROP_NAME: &str = "varde-notification-backdrop";
 const PANEL_WIDTH: i32 = 460;
+/// The panel's gap from the screen corner, kept inside the surface on every
+/// side so its shadow is not clipped.
 const PANEL_OFFSET: i32 = 18;
 const MIN_CONTENT_HEIGHT: i32 = 98;
 const MAX_CONTENT_HEIGHT: i32 = 520;
@@ -94,8 +96,6 @@ impl Center {
         window.set_layer(Layer::Overlay);
         window.set_anchor(Edge::Top, true);
         window.set_anchor(Edge::Right, true);
-        window.set_margin(Edge::Top, PANEL_OFFSET);
-        window.set_margin(Edge::Right, PANEL_OFFSET);
         window.set_keyboard_mode(KeyboardMode::OnDemand);
         for window in [&window, &backdrop] {
             window.connect_close_request({
@@ -171,6 +171,10 @@ impl Center {
             .orientation(gtk::Orientation::Vertical)
             .spacing(8)
             .width_request(PANEL_WIDTH)
+            .margin_top(PANEL_OFFSET)
+            .margin_bottom(PANEL_OFFSET)
+            .margin_start(PANEL_OFFSET)
+            .margin_end(PANEL_OFFSET)
             .build();
         panel.add_css_class("notification-center");
         panel.append(&header);
