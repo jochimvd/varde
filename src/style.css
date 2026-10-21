@@ -442,7 +442,7 @@ window.launcher .launcher-results-scroll > scrollbar {
 }
 
 window.launcher .launcher-results-scroll > scrollbar slider {
-    min-width: 4px;
+    min-width: 3px;
     min-height: 24px;
     margin: 0;
     border: none;
