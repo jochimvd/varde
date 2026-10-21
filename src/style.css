@@ -127,10 +127,13 @@ window.notifications {
     background: transparent;
 }
 
+/* The popover clips the panel to this radius and sizes its surface to fit
+   this shadow. */
 popover.bar-popover > contents {
     padding: 0;
     border: none;
-    box-shadow: none;
+    border-radius: 5px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
     background: transparent;
 }
 
