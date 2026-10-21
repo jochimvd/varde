@@ -17,6 +17,8 @@ const PANEL_WIDTH: i32 = 600;
 const ROW_HEIGHT: i32 = 44;
 const VISIBLE_ROWS: i32 = 10;
 const PANEL_HEIGHT: i32 = ROW_HEIGHT * (VISIBLE_ROWS + 1);
+// Room around the panel for its shadow, which the panel viewport would clip.
+const SHADOW_MARGIN: i32 = 24;
 const PREVIEW_AREA_HEIGHT: i32 = 300;
 const THUMBNAIL_WIDTH: i32 = 56;
 const THUMBNAIL_HEIGHT: i32 = 36;
@@ -173,6 +175,10 @@ impl Launcher {
             .orientation(gtk::Orientation::Vertical)
             .width_request(PANEL_WIDTH)
             .valign(gtk::Align::Start)
+            .margin_top(SHADOW_MARGIN)
+            .margin_bottom(SHADOW_MARGIN)
+            .margin_start(SHADOW_MARGIN)
+            .margin_end(SHADOW_MARGIN)
             .build();
         panel.add_css_class("launcher-panel");
         panel.set_overflow(gtk::Overflow::Hidden);
@@ -183,15 +189,15 @@ impl Launcher {
             .child(&panel)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vscrollbar_policy(gtk::PolicyType::Never)
-            .min_content_width(PANEL_WIDTH)
-            .max_content_width(PANEL_WIDTH)
+            .min_content_width(PANEL_WIDTH + 2 * SHADOW_MARGIN)
+            .max_content_width(PANEL_WIDTH + 2 * SHADOW_MARGIN)
             .propagate_natural_width(true)
             .propagate_natural_height(true)
             .build();
 
         let position = gtk::Box::builder()
-            .width_request(PANEL_WIDTH)
-            .height_request(PANEL_HEIGHT)
+            .width_request(PANEL_WIDTH + 2 * SHADOW_MARGIN)
+            .height_request(PANEL_HEIGHT + 2 * SHADOW_MARGIN)
             .halign(gtk::Align::Center)
             .valign(gtk::Align::Center)
             .build();

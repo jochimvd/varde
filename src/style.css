@@ -142,8 +142,12 @@ window.notification-backdrop {
 .notification-center {
     padding: 8px;
     border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
+    border-radius: 5px;
     background: @surface_color;
+}
+
+.notification-center {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .world-clock-title {
@@ -344,7 +348,7 @@ tooltip {
     color: @primary_color;
     background: @surface_low_color;
     border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
+    border-radius: 5px;
 }
 
 window.launcher {
@@ -357,6 +361,12 @@ window.launcher {
 .launcher-panel {
     border-radius: 5px;
     background: transparent;
+    /* The panel is transparent, so the ring stacks the notification center's
+       border over its surface to get the same shade. */
+    box-shadow:
+        0 4px 16px rgba(0, 0, 0, 0.35),
+        0 0 0 1px @surface_color,
+        0 0 0 1px @overlay_strong_color;
 }
 
 .launcher-input {
@@ -461,8 +471,9 @@ window.notification-popups {
 .notification-popup {
     padding: 10px 12px;
     border: 1px solid @overlay_strong_color;
-    border-radius: 8px;
+    border-radius: 5px;
     background: @surface_color;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .notification-popup.critical {
@@ -548,7 +559,7 @@ window.notification-popups {
 .notification-center-control {
     margin: 3px 0;
     padding: 5px 10px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_secondary_color;
     background: @overlay_subtle_color;
 }
@@ -575,7 +586,7 @@ window.notification-popups {
 }
 
 .notification-group {
-    border-radius: 6px;
+    border-radius: 5px;
     background: @overlay_subtle_color;
 }
 
@@ -593,7 +604,7 @@ window.notification-popups {
     font-family: 'JetBrainsMono Nerd Font Propo';
     min-height: 30px;
     padding: 2px 6px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_secondary_color;
 }
 
@@ -630,7 +641,7 @@ window.notification-popups {
 
 .notification-row-surface {
     margin: 2px;
-    border-radius: 6px;
+    border-radius: 5px;
 }
 
 .notification-row-surface.content-hover {
@@ -639,7 +650,7 @@ window.notification-popups {
 
 .notification-content {
     padding: 6px 8px;
-    border-radius: 6px;
+    border-radius: 5px;
 }
 
 .notification-row.critical,
@@ -680,7 +691,7 @@ window.notification-popups {
     padding: 0;
     min-width: 30px;
     min-height: 30px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_muted_color;
 }
 
@@ -704,7 +715,7 @@ window.notification-popups {
 
 .notification-action {
     padding: 4px 9px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @primary_color;
     background: @overlay_subtle_color;
 }
@@ -715,7 +726,7 @@ window.notification-popups {
 
 .notification-center-empty {
     min-height: 98px;
-    border-radius: 6px;
+    border-radius: 5px;
     color: @text_muted_color;
     background: @overlay_subtle_color;
 }
