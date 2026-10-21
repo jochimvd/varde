@@ -25,6 +25,11 @@ hl.config({
     },
     decoration = {
         rounding = 5,
+        blur = {
+            enabled = true,
+            size = 8,
+            passes = 2,
+        },
         shadow = {
             enabled = false,
         },
@@ -38,6 +43,20 @@ hl.config({
         force_default_wallpaper = 0,
     },
 })
+
+for _, namespace in ipairs({
+    "varde",
+    "varde-launcher",
+    "varde-notification-center",
+    "varde-notification-popups",
+}) do
+    hl.layer_rule({
+        match = { namespace = namespace },
+        blur = true,
+        blur_popups = true,
+        ignore_alpha = 0.1,
+    })
+end
 
 hl.permission({ binary = "/usr/bin/grim", type = "screencopy", mode = "allow" })
 
