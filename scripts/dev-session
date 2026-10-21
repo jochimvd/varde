@@ -82,6 +82,7 @@ rm -f -- "$VARDE_DEV_SESSION_FILE"
 cargo build "${build_args[@]}" --manifest-path "$repo_dir/Cargo.toml"
 
 compositor_pid=
+instance=
 bus_pid=
 bus_socket="$VARDE_DEV_RUNTIME_DIR/bus"
 launcher_pid_file="$VARDE_DEV_RUNTIME_DIR/compositor-pid"
@@ -90,11 +91,19 @@ metadata_tmp="$VARDE_DEV_SESSION_FILE.$$"
 cleanup() {
     if [[ -n $compositor_pid ]] && kill -0 "$compositor_pid" 2>/dev/null; then
         kill "$compositor_pid"
+        for _ in {1..20}; do
+            kill -0 "$compositor_pid" 2>/dev/null || break
+            sleep 0.1
+        done
     fi
     if [[ -n $bus_pid ]] && kill -0 "$bus_pid" 2>/dev/null; then
         kill "$bus_pid"
     fi
     rm -f -- "$bus_socket" "$launcher_pid_file" "$metadata_tmp" "$VARDE_DEV_SESSION_FILE"
+    # Hyprland leaves its runtime directory behind when it exits.
+    if [[ -n $instance ]]; then
+        rm -rf -- "${XDG_RUNTIME_DIR:?}/hypr/$instance"
+    fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -131,7 +140,6 @@ float = true, size = { 1280, 720 }, center = true, \
 workspace = 'name:$host_workspace silent', no_initial_focus = true, \
     no_anim = true, render_unfocused = true }))" >/dev/null
 
-instance=
 for _ in {1..100}; do
     if [[ ! -f $launcher_pid_file ]]; then
         sleep 0.05
