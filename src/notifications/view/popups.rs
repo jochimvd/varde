@@ -22,6 +22,8 @@ const POPUP_NAME: &str = "varde-notification-popups";
 const POPUP_WIDTH: i32 = 400;
 const POPUP_RIGHT: i32 = 20;
 const POPUP_TOP: i32 = 50;
+/// Kept inside the surface around the cards so their shadows are not clipped.
+const SHADOW_ROOM: i32 = 20;
 const POPUP_PICTURE_SIZE: i32 = 54;
 pub(super) const MAX_POPUPS: usize = 5;
 
@@ -106,8 +108,8 @@ impl Popups {
         window.set_layer(gtk4_layer_shell::Layer::Overlay);
         window.set_anchor(gtk4_layer_shell::Edge::Top, true);
         window.set_anchor(gtk4_layer_shell::Edge::Right, true);
-        window.set_margin(gtk4_layer_shell::Edge::Top, POPUP_TOP);
-        window.set_margin(gtk4_layer_shell::Edge::Right, POPUP_RIGHT);
+        window.set_margin(gtk4_layer_shell::Edge::Top, POPUP_TOP - SHADOW_ROOM);
+        window.set_margin(gtk4_layer_shell::Edge::Right, POPUP_RIGHT - SHADOW_ROOM);
         window.set_exclusive_zone(0);
         window.set_keyboard_mode(gtk4_layer_shell::KeyboardMode::None);
 
@@ -115,6 +117,10 @@ impl Popups {
             .orientation(gtk::Orientation::Vertical)
             .spacing(8)
             .width_request(POPUP_WIDTH)
+            .margin_top(SHADOW_ROOM)
+            .margin_bottom(SHADOW_ROOM)
+            .margin_start(SHADOW_ROOM)
+            .margin_end(SHADOW_ROOM)
             .build();
         window.set_child(Some(&list));
 
@@ -144,7 +150,7 @@ impl Popups {
                 }
             }
         });
-        window.add_controller(motion);
+        list.add_controller(motion);
 
         Self {
             window,

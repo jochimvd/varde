@@ -472,6 +472,7 @@ window.notification-popups {
     border: 1px solid @overlay_strong_color;
     border-radius: 5px;
     background: @surface_color;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
 .notification-popup.critical {
