@@ -23,7 +23,8 @@ window.bar {
     font-family: 'JetBrainsMono Nerd Font';
     font-weight: normal;
     font-size: 14px;
-    color: @primary_color;
+    /* Dimmed: the bar sits still all day on an OLED panel. */
+    color: @text_secondary_color;
     background: @surface_color;
 }
 
@@ -66,6 +67,7 @@ button {
     padding: 0;
     border: none;
     border-radius: 0;
+    color: inherit;
     background: none;
     box-shadow: none;
     text-shadow: none;
@@ -90,7 +92,7 @@ button {
 }
 
 .workspaces button.active {
-    color: @primary_color;
+    color: @text_secondary_color;
 }
 
 .workspaces button.active:hover {
