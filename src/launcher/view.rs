@@ -202,11 +202,14 @@ impl Launcher {
         // belong to other widgets, so any press outside the panel closes it.
         let outside_click = gtk::GestureClick::new();
         outside_click.connect_pressed({
-            let window = window.clone();
-            let panel = panel.clone();
+            let panel = panel.downgrade();
             move |gesture, _, x, y| {
-                let inside = window
-                    .pick(x, y, gtk::PickFlags::DEFAULT)
+                let Some(panel) = panel.upgrade() else {
+                    return;
+                };
+                let inside = gesture
+                    .widget()
+                    .and_then(|window| window.pick(x, y, gtk::PickFlags::DEFAULT))
                     .is_some_and(|widget| widget == panel || widget.is_ancestor(&panel));
                 if inside {
                     gesture.set_state(gtk::EventSequenceState::Denied);
