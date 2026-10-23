@@ -271,6 +271,10 @@ fn menu_content(
     root: &gtk::Popover,
 ) -> gtk::Box {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // Hyprland sends a new menu a pointer enter before GTK first lays it out,
+    // and GTK then picks the last unallocated button as hovered. Hiding the
+    // overflow keeps the picking inside the content's real bounds.
+    content.set_overflow(gtk::Overflow::Hidden);
     for item in items.into_iter().filter(|item| item.visible) {
         if item.separator {
             content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
