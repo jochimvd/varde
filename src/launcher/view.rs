@@ -95,10 +95,14 @@ impl Launcher {
             .build();
         entry.add_css_class("launcher-input");
         window.connect_map({
-            let entry = entry.clone();
+            let entry = entry.downgrade();
             move |_| {
                 let entry = entry.clone();
                 glib::idle_add_local_once(move || {
+                    // The launcher may have closed before this ran.
+                    let Some(entry) = entry.upgrade().filter(|entry| entry.root().is_some()) else {
+                        return;
+                    };
                     entry.grab_focus_without_selecting();
                     entry.set_position(-1);
                 });
