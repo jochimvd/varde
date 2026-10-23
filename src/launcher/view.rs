@@ -87,16 +87,6 @@ impl Launcher {
 
         let backdrop = gtk::Box::builder().hexpand(true).vexpand(true).build();
         backdrop.add_css_class("launcher-backdrop");
-        let backdrop_click = gtk::GestureClick::new();
-        backdrop_click.connect_released({
-            let manager = Rc::downgrade(manager);
-            move |_, _, _, _| {
-                if let Some(manager) = manager.upgrade() {
-                    manager.close();
-                }
-            }
-        });
-        backdrop.add_controller(backdrop_click);
 
         let entry = gtk::Entry::builder()
             .has_frame(false)
@@ -207,6 +197,31 @@ impl Launcher {
         overlay.set_child(Some(&backdrop));
         overlay.add_overlay(&position);
         window.set_child(Some(&overlay));
+
+        // The panel's shadow margin and the room below a short result list
+        // belong to other widgets, so any press outside the panel closes it.
+        let outside_click = gtk::GestureClick::new();
+        outside_click.connect_pressed({
+            let window = window.clone();
+            let panel = panel.clone();
+            move |gesture, _, x, y| {
+                let inside = window
+                    .pick(x, y, gtk::PickFlags::DEFAULT)
+                    .is_some_and(|widget| widget == panel || widget.is_ancestor(&panel));
+                if inside {
+                    gesture.set_state(gtk::EventSequenceState::Denied);
+                }
+            }
+        });
+        outside_click.connect_released({
+            let manager = Rc::downgrade(manager);
+            move |_, _, _, _| {
+                if let Some(manager) = manager.upgrade() {
+                    manager.close();
+                }
+            }
+        });
+        window.add_controller(outside_click);
 
         entry.connect_changed({
             let manager = Rc::downgrade(manager);
