@@ -117,11 +117,7 @@ impl Entry {
             move |image| show_pixmap(image, &pixmaps.borrow())
         });
 
-        let menu = gtk::Popover::builder()
-            .autohide(true)
-            .has_arrow(false)
-            .position(gtk::PositionType::Bottom)
-            .build();
+        let menu = crate::bar::tooltips::popover(gtk::PositionType::Bottom);
         menu.add_css_class("tray-menu");
         menu.set_offset(0, MENU_OFFSET);
         menu.set_parent(&target);
@@ -133,14 +129,6 @@ impl Entry {
                 let visible = menu.is_visible();
                 if was_visible.replace(visible) == visible {
                     return;
-                }
-                if let Some(target) = menu.parent() {
-                    // GTK moves a visible tooltip onto any of the shell's popovers
-                    // that gets a pointer event, and then blocks until Hyprland
-                    // configures it. A menu Hyprland has just dismissed never
-                    // gets that configure, which froze the whole shell.
-                    target.set_has_tooltip(!visible && target.tooltip_text().is_some());
-                    target.trigger_tooltip_query();
                 }
                 let count = if visible {
                     open_menus.get() + 1
@@ -170,14 +158,14 @@ impl Entry {
             }
         });
 
-        let request_menu = {
+        // An item without a dbusmenu shows its own menu.
+        let open_menu = {
             let shared = shared.clone();
             let id = item.id.clone();
             let menu_path = menu_path.clone();
-            move || {
-                if let Some(path) = menu_path.borrow().as_deref() {
-                    watcher::request_menu(&shared, &id, path, menu_sender.clone());
-                }
+            move |position| match menu_path.borrow().as_deref() {
+                Some(path) => watcher::request_menu(&shared, &id, path, menu_sender.clone()),
+                None => watcher::call_item(&shared, &id, "ContextMenu", position),
             }
         };
         let click = gtk::GestureClick::new();
@@ -187,7 +175,7 @@ impl Entry {
             let id = item.id.clone();
             let item_is_menu = item_is_menu.clone();
             move |gesture, _, x, y| match gesture.current_button() {
-                1 if item_is_menu.get() => request_menu(),
+                1 if item_is_menu.get() => open_menu(pointer_position(gesture, x, y)),
                 1 => watcher::call_item(&shared, &id, "Activate", pointer_position(gesture, x, y)),
                 2 => watcher::call_item(
                     &shared,
@@ -195,7 +183,7 @@ impl Entry {
                     "SecondaryActivate",
                     pointer_position(gesture, x, y),
                 ),
-                3 => request_menu(),
+                3 => open_menu(pointer_position(gesture, x, y)),
                 _ => {}
             }
         });
@@ -232,8 +220,6 @@ impl Entry {
 
     fn update(&self, item: &Item) {
         self.target.set_tooltip_text(item.tooltip.as_deref());
-        self.target
-            .set_has_tooltip(item.tooltip.is_some() && !self.menu.is_visible());
         self.pixmaps.replace(Arc::clone(&item.pixmaps));
         set_icon(&self.image, item);
         self.item_is_menu.set(item.item_is_menu);
@@ -271,6 +257,10 @@ fn menu_content(
     root: &gtk::Popover,
 ) -> gtk::Box {
     let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    // Hyprland sends a new menu a pointer enter before GTK first lays it out,
+    // and GTK then picks the last unallocated button as hovered. Hiding the
+    // overflow keeps the picking inside the content's real bounds.
+    content.set_overflow(gtk::Overflow::Hidden);
     for item in items.into_iter().filter(|item| item.visible) {
         if item.separator {
             content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -315,11 +305,7 @@ fn submenu_button(
     path: &str,
     root: &gtk::Popover,
 ) -> gtk::MenuButton {
-    let submenu = gtk::Popover::builder()
-        .autohide(true)
-        .has_arrow(false)
-        .position(gtk::PositionType::Right)
-        .build();
+    let submenu = crate::bar::tooltips::popover(gtk::PositionType::Right);
     submenu.add_css_class("tray-menu");
     let children = std::mem::take(&mut item.children);
     submenu.set_child(Some(&menu_content(children, shared, id, path, root)));

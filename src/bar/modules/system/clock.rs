@@ -216,12 +216,8 @@ fn world_clock_popover(label: &gtk::Label) -> gtk::Popover {
 }
 
 fn module_popover(label: &gtk::Label, content: &gtk::Box) -> gtk::Popover {
-    let popover = gtk::Popover::builder()
-        .autohide(true)
-        .has_arrow(false)
-        .position(gtk::PositionType::Bottom)
-        .child(content)
-        .build();
+    let popover = crate::bar::tooltips::popover(gtk::PositionType::Bottom);
+    popover.set_child(Some(content));
     popover.add_css_class("bar-popover");
     popover.set_halign(gtk::Align::Center);
     popover.set_offset(0, POPOVER_TOP);
