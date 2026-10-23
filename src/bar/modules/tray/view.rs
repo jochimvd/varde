@@ -170,14 +170,14 @@ impl Entry {
             }
         });
 
-        let request_menu = {
+        // An item without a dbusmenu shows its own menu.
+        let open_menu = {
             let shared = shared.clone();
             let id = item.id.clone();
             let menu_path = menu_path.clone();
-            move || {
-                if let Some(path) = menu_path.borrow().as_deref() {
-                    watcher::request_menu(&shared, &id, path, menu_sender.clone());
-                }
+            move |position| match menu_path.borrow().as_deref() {
+                Some(path) => watcher::request_menu(&shared, &id, path, menu_sender.clone()),
+                None => watcher::call_item(&shared, &id, "ContextMenu", position),
             }
         };
         let click = gtk::GestureClick::new();
@@ -187,7 +187,7 @@ impl Entry {
             let id = item.id.clone();
             let item_is_menu = item_is_menu.clone();
             move |gesture, _, x, y| match gesture.current_button() {
-                1 if item_is_menu.get() => request_menu(),
+                1 if item_is_menu.get() => open_menu(pointer_position(gesture, x, y)),
                 1 => watcher::call_item(&shared, &id, "Activate", pointer_position(gesture, x, y)),
                 2 => watcher::call_item(
                     &shared,
@@ -195,7 +195,7 @@ impl Entry {
                     "SecondaryActivate",
                     pointer_position(gesture, x, y),
                 ),
-                3 => request_menu(),
+                3 => open_menu(pointer_position(gesture, x, y)),
                 _ => {}
             }
         });
