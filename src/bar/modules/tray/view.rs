@@ -134,6 +134,14 @@ impl Entry {
                 if was_visible.replace(visible) == visible {
                     return;
                 }
+                if let Some(target) = menu.parent() {
+                    // GTK moves a visible tooltip onto any of the shell's popovers
+                    // that gets a pointer event, and then blocks until Hyprland
+                    // configures it. A menu Hyprland has just dismissed never
+                    // gets that configure, which froze the whole shell.
+                    target.set_has_tooltip(!visible && target.tooltip_text().is_some());
+                    target.trigger_tooltip_query();
+                }
                 let count = if visible {
                     open_menus.get() + 1
                 } else {
@@ -224,6 +232,8 @@ impl Entry {
 
     fn update(&self, item: &Item) {
         self.target.set_tooltip_text(item.tooltip.as_deref());
+        self.target
+            .set_has_tooltip(item.tooltip.is_some() && !self.menu.is_visible());
         self.pixmaps.replace(Arc::clone(&item.pixmaps));
         set_icon(&self.image, item);
         self.item_is_menu.set(item.item_is_menu);
