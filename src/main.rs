@@ -48,16 +48,9 @@ fn main() -> glib::ExitCode {
                 settings.set_gtk_cursor_blink_time(1_000);
             }
             notifications.start(app);
-        }
-    });
-    app.connect_activate({
-        let notifications = notifications.clone();
-        let title = title.clone();
-        let started = std::cell::Cell::new(false);
-        move |app| {
-            if !started.replace(true) {
-                bar::start(app, &notifications, &title);
-            }
+            // Whichever command starts the primary instance also starts the
+            // bars, so the shell is never left running without them.
+            bar::start(app, &notifications, &title);
         }
     });
     app.connect_command_line({
@@ -105,24 +98,20 @@ fn handle_command_line(
         command::Request::Version => {
             command_line.print_literal(&format!("varde {}\n", env!("CARGO_PKG_VERSION")))
         }
-        command::Request::Start => app.activate(),
+        command::Request::Start => {}
         command::Request::Launcher => {
-            app.activate();
             notifications.close();
             launcher.toggle_apps(app);
         }
         command::Request::Actions => {
-            app.activate();
             notifications.close();
             launcher.toggle_actions(app);
         }
         command::Request::Clipboard => {
-            app.activate();
             notifications.close();
             launcher.toggle_clipboard(app);
         }
         command::Request::Notifications => {
-            app.activate();
             launcher.close();
             notifications.toggle(None);
         }
