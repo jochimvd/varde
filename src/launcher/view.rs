@@ -87,16 +87,6 @@ impl Launcher {
 
         let backdrop = gtk::Box::builder().hexpand(true).vexpand(true).build();
         backdrop.add_css_class("launcher-backdrop");
-        let backdrop_click = gtk::GestureClick::new();
-        backdrop_click.connect_released({
-            let manager = Rc::downgrade(manager);
-            move |_, _, _, _| {
-                if let Some(manager) = manager.upgrade() {
-                    manager.close();
-                }
-            }
-        });
-        backdrop.add_controller(backdrop_click);
 
         let entry = gtk::Entry::builder()
             .has_frame(false)
@@ -105,10 +95,14 @@ impl Launcher {
             .build();
         entry.add_css_class("launcher-input");
         window.connect_map({
-            let entry = entry.clone();
+            let entry = entry.downgrade();
             move |_| {
                 let entry = entry.clone();
                 glib::idle_add_local_once(move || {
+                    // The launcher may have closed before this ran.
+                    let Some(entry) = entry.upgrade().filter(|entry| entry.root().is_some()) else {
+                        return;
+                    };
                     entry.grab_focus_without_selecting();
                     entry.set_position(-1);
                 });
@@ -207,6 +201,34 @@ impl Launcher {
         overlay.set_child(Some(&backdrop));
         overlay.add_overlay(&position);
         window.set_child(Some(&overlay));
+
+        // The panel's shadow margin and the room below a short result list
+        // belong to other widgets, so any press outside the panel closes it.
+        let outside_click = gtk::GestureClick::new();
+        outside_click.connect_pressed({
+            let panel = panel.downgrade();
+            move |gesture, _, x, y| {
+                let Some(panel) = panel.upgrade() else {
+                    return;
+                };
+                let inside = gesture
+                    .widget()
+                    .and_then(|window| window.pick(x, y, gtk::PickFlags::DEFAULT))
+                    .is_some_and(|widget| widget == panel || widget.is_ancestor(&panel));
+                if inside {
+                    gesture.set_state(gtk::EventSequenceState::Denied);
+                }
+            }
+        });
+        outside_click.connect_released({
+            let manager = Rc::downgrade(manager);
+            move |_, _, _, _| {
+                if let Some(manager) = manager.upgrade() {
+                    manager.close();
+                }
+            }
+        });
+        window.add_controller(outside_click);
 
         entry.connect_changed({
             let manager = Rc::downgrade(manager);

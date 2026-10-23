@@ -68,11 +68,14 @@ fn main() -> glib::ExitCode {
         }
     });
     // systemd and dev-restart stop the shell with SIGTERM; quitting through
-    // the main loop lets the notifications be saved for the next start.
+    // the main loop lets the notifications be saved for the next start. An
+    // open selector runs a nested loop, which has to end before quit applies.
     for signal in [libc::SIGTERM, libc::SIGINT] {
         glib::unix_signal_add_local(signal, {
             let app = app.clone();
+            let launcher = launcher.clone();
             move || {
+                launcher.close();
                 app.quit();
                 glib::ControlFlow::Break
             }

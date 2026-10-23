@@ -17,6 +17,10 @@ use async_channel::{Receiver, Sender};
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_IMAGE_AREA: i64 = 7680 * 4320;
+// A wrapping label lays out all of its text on the main thread, so a large
+// entry would stall the launcher.
+const MAX_PREVIEW_BYTES: usize = 8 * 1024;
+const MAX_PREVIEW_LINES: usize = 200;
 
 /// Image sizes from the history listing, so oversized images are skipped
 /// before they are decoded.
@@ -357,7 +361,25 @@ fn image_sizes(items: &[LoadedItem]) -> HashMap<String, (i32, i32)> {
 
 fn decode_text(id: &str) -> Option<String> {
     let bytes = crate::background::command_output("cliphist", &["decode", id], COMMAND_TIMEOUT)?;
-    String::from_utf8(bytes).ok()
+    preview_text(&bytes).map(str::to_owned)
+}
+
+fn preview_text(bytes: &[u8]) -> Option<&str> {
+    let bytes = &bytes[..bytes.len().min(MAX_PREVIEW_BYTES)];
+    let end = bytes
+        .iter()
+        .enumerate()
+        .filter(|&(_, &byte)| byte == b'\n')
+        .nth(MAX_PREVIEW_LINES - 1)
+        .map_or(bytes.len(), |(index, _)| index);
+    match std::str::from_utf8(&bytes[..end]) {
+        Ok(text) => Some(text),
+        // Truncation may have cut the last character in half.
+        Err(error) if error.error_len().is_none() => {
+            std::str::from_utf8(&bytes[..error.valid_up_to()]).ok()
+        }
+        Err(_) => None,
+    }
 }
 
 fn decode_image(
@@ -519,6 +541,29 @@ mod tests {
         assert_eq!(items[1].id, "41");
         assert_eq!(items[1].title, "Binary data");
         assert!(matches!(items[1].visual, LoadedVisual::None));
+    }
+
+    #[test]
+    fn truncates_previewed_text() {
+        assert_eq!(preview_text(b"short\ntext"), Some("short\ntext"));
+        assert_eq!(preview_text(b"\xff\n"), None);
+
+        let long = "\u{e9}".repeat(MAX_PREVIEW_BYTES);
+        let text = preview_text(long.as_bytes()).unwrap();
+        assert_eq!(text.len(), MAX_PREVIEW_BYTES);
+        assert!(long.starts_with(text));
+
+        let mut odd = "a".repeat(MAX_PREVIEW_BYTES - 1);
+        odd.push('\u{e9}');
+        assert_eq!(
+            preview_text(odd.as_bytes()).unwrap().len(),
+            MAX_PREVIEW_BYTES - 1
+        );
+
+        let lines = "line\n".repeat(2 * MAX_PREVIEW_LINES);
+        let text = preview_text(lines.as_bytes()).unwrap();
+        assert_eq!(text.lines().count(), MAX_PREVIEW_LINES);
+        assert!(!text.ends_with('\n'));
     }
 
     #[test]
