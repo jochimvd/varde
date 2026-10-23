@@ -361,11 +361,10 @@ fn popup_widget(
     let dismiss = gtk::GestureClick::new();
     dismiss.set_button(3);
     dismiss.connect_released({
-        let card = card.clone();
         let manager = manager.clone();
         let id = notification.id;
-        move |_, _, x, y| {
-            if card.contains(x, y)
+        move |dismiss, _, x, y| {
+            if dismiss.widget().is_some_and(|card| card.contains(x, y))
                 && let Some(manager) = manager.upgrade()
             {
                 manager.dismiss(id);
@@ -385,11 +384,10 @@ fn popup_widget(
         let activate = gtk::GestureClick::new();
         activate.set_button(1);
         activate.connect_released({
-            let card = card.clone();
             let manager = manager.clone();
             let id = notification.id;
-            move |_, _, x, y| {
-                if card.contains(x, y)
+            move |activate, _, x, y| {
+                if let Some(card) = activate.widget().filter(|card| card.contains(x, y))
                     && let Some(manager) = manager.upgrade()
                 {
                     manager.invoke_action(id, "default", activation_token(&card));
