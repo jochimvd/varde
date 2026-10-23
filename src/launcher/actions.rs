@@ -92,7 +92,9 @@ impl Source for Actions {
 
 fn launch(action: &Action) -> Result<Outcome, String> {
     let name = action.name.clone();
-    crate::background::run(&["bash", "-c", &action.command], move |result| {
+    // Like apps, actions get their own unit so they outlive a shell restart.
+    let arguments = ["uwsm-app", "--", "bash", "-c", &action.command];
+    crate::background::run(&arguments, move |result| {
         if let Err(error) = result {
             eprintln!("varde: action {name:?} failed: {error}");
         }
