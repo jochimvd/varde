@@ -401,6 +401,7 @@ impl Notifications {
         body: &str,
         actions: Vec<String>,
         hints: HashMap<String, OwnedValue>,
+        // Like GNOME, every popup times out the same way, whatever the sender asks.
         _expire_timeout: i32,
     ) -> u32 {
         let sound = sound_hint(&hints);
