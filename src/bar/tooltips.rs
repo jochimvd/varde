@@ -14,10 +14,17 @@ thread_local! {
     static SUPPRESSED: RefCell<Vec<glib::WeakRef<gtk::Widget>>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Turns off every bar's tooltips while `popover` is open.
-pub fn track(popover: &gtk::Popover) {
+/// A popover for the bars. Every bar popover must come from here, so that the
+/// bars' tooltips stay off while it is open.
+pub fn popover(position: gtk::PositionType) -> gtk::Popover {
+    let popover = gtk::Popover::builder()
+        .autohide(true)
+        .has_arrow(false)
+        .position(position)
+        .build();
     popover.connect_map(|_| set_open(OPEN_POPOVERS.get() + 1));
     popover.connect_unmap(|_| set_open(OPEN_POPOVERS.get().saturating_sub(1)));
+    popover
 }
 
 /// Turns off the tooltips `bar` gained while a popover is open.

@@ -117,15 +117,10 @@ impl Entry {
             move |image| show_pixmap(image, &pixmaps.borrow())
         });
 
-        let menu = gtk::Popover::builder()
-            .autohide(true)
-            .has_arrow(false)
-            .position(gtk::PositionType::Bottom)
-            .build();
+        let menu = crate::bar::tooltips::popover(gtk::PositionType::Bottom);
         menu.add_css_class("tray-menu");
         menu.set_offset(0, MENU_OFFSET);
         menu.set_parent(&target);
-        crate::bar::tooltips::track(&menu);
         menu.connect_visible_notify({
             let open_menus = open_menus.clone();
             let menu_visibility = menu_visibility.clone();
@@ -310,11 +305,7 @@ fn submenu_button(
     path: &str,
     root: &gtk::Popover,
 ) -> gtk::MenuButton {
-    let submenu = gtk::Popover::builder()
-        .autohide(true)
-        .has_arrow(false)
-        .position(gtk::PositionType::Right)
-        .build();
+    let submenu = crate::bar::tooltips::popover(gtk::PositionType::Right);
     submenu.add_css_class("tray-menu");
     let children = std::mem::take(&mut item.children);
     submenu.set_child(Some(&menu_content(children, shared, id, path, root)));
