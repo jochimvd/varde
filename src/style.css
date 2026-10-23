@@ -510,7 +510,9 @@ window.notification-popups {
     background: none;
 }
 
+/* The theme's -1px margins offset a border this bar doesn't have. */
 .notification-popup-timer progress {
+    margin: 0;
     background: @text_muted_color;
 }
 
