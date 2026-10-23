@@ -1,3 +1,5 @@
+use std::{fs, io, path::PathBuf};
+
 use gtk::prelude::*;
 use zbus::blocking::{Connection, Proxy};
 
@@ -25,7 +27,7 @@ impl Idle {
         // The screensaver owner may be slow to activate, so never toggle on the main thread.
         background::spawn("idle-inhibitor", move || {
             let mut state = IdleInhibitor::default();
-            let result = state.activate();
+            let result = if saved() { state.activate() } else { Ok(()) };
             if results
                 .send_blocking(Inhibition {
                     active: state.cookie.is_some(),
@@ -42,6 +44,7 @@ impl Idle {
                 } else {
                     state.activate()
                 };
+                save(state.cookie.is_some());
                 if results
                     .send_blocking(Inhibition {
                         active: state.cookie.is_some(),
@@ -72,6 +75,31 @@ impl Idle {
         });
 
         button
+    }
+}
+
+fn path() -> PathBuf {
+    gtk::glib::user_state_dir().join("varde/idle-inhibited")
+}
+
+fn saved() -> bool {
+    path().exists()
+}
+
+fn save(active: bool) {
+    let path = path();
+    let result = if active {
+        path.parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::write(&path, ""))
+    } else {
+        fs::remove_file(&path).or_else(|error| match error.kind() {
+            io::ErrorKind::NotFound => Ok(()),
+            _ => Err(error),
+        })
+    };
+    if let Err(error) = result {
+        eprintln!("varde: could not save idle inhibition: {error}");
     }
 }
 
