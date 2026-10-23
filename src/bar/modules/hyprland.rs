@@ -656,8 +656,8 @@ fn activation_command(selector: &WorkspaceSelector) -> String {
             format!("dispatch hl.dsp.focus({{ workspace = {id} }})")
         }
         WorkspaceSelector::Name(name) => format!(
-            "dispatch hl.dsp.focus({{ workspace = 'name:{}' }})",
-            name.replace('\\', "\\\\").replace('\'', "\\'")
+            "dispatch hl.dsp.focus({{ workspace = {} }})",
+            super::lua_string(&format!("name:{name}"))
         ),
     }
 }

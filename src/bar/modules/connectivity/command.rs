@@ -165,17 +165,17 @@ pub(super) fn property(text: &str, name: &str) -> Option<String> {
 
 pub(super) fn strip_ansi(text: &str) -> String {
     let mut result = String::new();
-    let mut chars = text.chars();
+    let mut chars = text.chars().peekable();
 
     while let Some(character) = chars.next() {
-        if character == '\u{1b}' && chars.next() == Some('[') {
+        if character != '\u{1b}' {
+            result.push(character);
+        } else if chars.next_if_eq(&'[').is_some() {
             for character in chars.by_ref() {
                 if ('@'..='~').contains(&character) {
                     break;
                 }
             }
-        } else {
-            result.push(character);
         }
     }
 
@@ -185,6 +185,16 @@ pub(super) fn strip_ansi(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strips_ansi_sequences_and_keeps_the_text_around_them() {
+        assert_eq!(
+            strip_ansi("\u{1b}[0;94m[bluetooth]\u{1b}[0m# ok"),
+            "[bluetooth]# ok"
+        );
+        assert_eq!(strip_ansi("a\u{1b}b"), "ab");
+        assert_eq!(strip_ansi("end\u{1b}"), "end");
+    }
 
     #[test]
     fn coalesces_queued_refreshes_and_sets_their_deadline() {
