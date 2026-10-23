@@ -4,6 +4,7 @@ use gtk::{glib, prelude::*};
 use gtk4_layer_shell::LayerShell;
 
 mod modules;
+mod tooltips;
 
 use crate::notifications;
 use modules::{
@@ -392,6 +393,7 @@ impl Bar {
         {
             self.notifications.show(indicator);
         }
+        tooltips::refresh(&self.window);
     }
 
     fn connector(&self) -> String {

@@ -226,6 +226,7 @@ fn module_popover(label: &gtk::Label, content: &gtk::Box) -> gtk::Popover {
     popover.set_halign(gtk::Align::Center);
     popover.set_offset(0, POPOVER_TOP);
     popover.set_parent(label);
+    crate::bar::tooltips::track(&popover);
     label.connect_destroy({
         let popover = popover.clone();
         move |_| popover.unparent()
