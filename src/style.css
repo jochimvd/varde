@@ -471,6 +471,60 @@ window.notification-popups {
     background: transparent;
 }
 
+window.osd {
+    font-family: 'JetBrainsMono Nerd Font';
+    font-size: 14px;
+    color: @primary_color;
+    background: transparent;
+}
+
+.osd-pill {
+    min-height: 24px;
+    padding: 10px 18px;
+    border: 1px solid @overlay_strong_color;
+    border-radius: 5px;
+    background: @surface_color;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.osd-icon {
+    min-width: 20px;
+    font-size: 18px;
+}
+
+.osd-text.caption {
+    color: @text_secondary_color;
+    font-size: 12px;
+}
+
+.osd-value {
+    min-width: 28px;
+    color: @text_secondary_color;
+}
+
+.osd-level trough {
+    min-width: 120px;
+    min-height: 4px;
+    border-radius: 2px;
+    background: @overlay_subtle_color;
+}
+
+.osd-level progress {
+    min-height: 4px;
+    margin: 0;
+    border-radius: 2px;
+    background: @accent_color;
+}
+
+window.osd.muted .osd-icon,
+window.osd.muted .osd-value {
+    color: @text_muted_color;
+}
+
+window.osd.muted .osd-level progress {
+    background: @text_muted_color;
+}
+
 .notification-popup {
     padding: 10px 12px;
     border: 1px solid @overlay_strong_color;

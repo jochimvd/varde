@@ -49,6 +49,7 @@ for _, namespace in ipairs({
     "varde-launcher",
     "varde-notification-center",
     "varde-notification-popups",
+    "varde-osd",
 }) do
     hl.layer_rule({
         match = { namespace = namespace },

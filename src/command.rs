@@ -10,6 +10,7 @@ Commands:
   clipboard      Toggle the clipboard launcher
   notifications  Manage notifications
   title          Write to the bar's title
+  osd            Show an on-screen display
   dmenu          Select a line read from standard input
   help           Print help for a command
 
@@ -56,6 +57,16 @@ one already applied to the same ID is ignored.
 JSON: {\"version\": 1, \"id\": \"...\", \"text\": \"...\", \"icon\": \"...\",
        \"ttl_ms\": 0, \"items_delay_ms\": 0,
        \"items\": [{\"key\": \"...\", \"label\": \"...\", \"pinned\": false}]}";
+const OSD_HELP: &str = "Show an on-screen display
+
+Usage: varde osd [OPTIONS] <ICON> [TEXT]
+
+Shows ICON, such as a Nerd Font glyph, with TEXT beside it near the bottom of
+the focused monitor for a moment. A newer display replaces it.
+
+Options:
+  -l, --level <PERCENT>  Show a bar filled to PERCENT, from 0 to 100
+  -h, --help             Print help";
 const DMENU_HELP: &str = "Select a line read from standard input
 
 Usage: varde dmenu [OPTIONS]
@@ -87,6 +98,11 @@ pub enum Request {
     TitleClear {
         seq: Option<u64>,
         id: String,
+    },
+    Osd {
+        icon: String,
+        text: Option<String>,
+        level: Option<u8>,
     },
 }
 
@@ -126,6 +142,7 @@ pub fn parse(arguments: &[std::ffi::OsString]) -> Result<Request, String> {
         [command, option] if option == "-h" || option == "--help" => help(command),
         [command, options @ ..] if command == "dmenu" => parse_dmenu(options),
         [command, options @ ..] if command == "title" => parse_title(options),
+        [command, options @ ..] if command == "osd" => parse_osd(options),
         [command, argument, ..]
             if matches!(
                 command.as_str(),
@@ -148,6 +165,7 @@ fn help(command: &str) -> Result<Request, String> {
         "notifications" => Ok(Request::Help(NOTIFICATIONS_HELP)),
         "dmenu" => Ok(Request::Help(DMENU_HELP)),
         "title" => Ok(Request::Help(TITLE_HELP)),
+        "osd" => Ok(Request::Help(OSD_HELP)),
         _ => Err(format!("unknown command '{command}'")),
     }
 }
@@ -202,6 +220,51 @@ fn parse_title(options: &[String]) -> Result<Request, String> {
         ("set" | "clear", [.., argument]) => Err(format!("unexpected argument '{argument}'")),
         ("clear", []) => Err("clear requires an ID".into()),
         (action, _) => Err(format!("unknown title action '{action}'")),
+    }
+}
+
+fn parse_osd(options: &[String]) -> Result<Request, String> {
+    let mut level = None;
+    let mut positional = Vec::new();
+    let mut index = 0;
+    while index < options.len() {
+        match options[index].as_str() {
+            "-h" | "--help" => return Ok(Request::Help(OSD_HELP)),
+            "-l" | "--level" => {
+                let value = options
+                    .get(index + 1)
+                    .ok_or_else(|| format!("{} requires a value", options[index]))?;
+                level = Some(
+                    value
+                        .parse::<u8>()
+                        .ok()
+                        .filter(|percent| *percent <= 100)
+                        .ok_or_else(|| format!("invalid level '{value}'"))?,
+                );
+                index += 2;
+            }
+            option if option.starts_with('-') && option.len() > 1 => {
+                return Err(format!("unknown option '{option}'"));
+            }
+            argument => {
+                positional.push(argument.to_string());
+                index += 1;
+            }
+        }
+    }
+    match positional.as_slice() {
+        [icon] => Ok(Request::Osd {
+            icon: icon.clone(),
+            text: None,
+            level,
+        }),
+        [icon, text] => Ok(Request::Osd {
+            icon: icon.clone(),
+            text: Some(text.clone()),
+            level,
+        }),
+        [] => Err("osd requires an ICON".into()),
+        [.., argument] => Err(format!("unexpected argument '{argument}'")),
     }
 }
 
@@ -309,6 +372,31 @@ mod tests {
             &["title", "clear", "a", "b"],
             &["title", "set", "--seq", "x", "{}"],
             &["title", "show"],
+        ] {
+            assert!(parse(&args(invalid)).is_err(), "accepted {invalid:?}");
+        }
+    }
+
+    #[test]
+    fn parses_osd() {
+        assert!(matches!(
+            parse(&args(&["osd", "󰄀"])),
+            Ok(Request::Osd { icon, text: None, level: None }) if icon == "󰄀"
+        ));
+        assert!(matches!(
+            parse(&args(&["osd", "--level", "40", "󰃠", "Brightness"])),
+            Ok(Request::Osd { text: Some(text), level: Some(40), .. }) if text == "Brightness"
+        ));
+        assert!(matches!(
+            parse(&args(&["osd", "--help"])),
+            Ok(Request::Help(OSD_HELP))
+        ));
+        for invalid in [
+            &["osd"][..],
+            &["osd", "a", "b", "c"],
+            &["osd", "--level", "101", "a"],
+            &["osd", "--level"],
+            &["osd", "--bad", "a"],
         ] {
             assert!(parse(&args(invalid)).is_err(), "accepted {invalid:?}");
         }

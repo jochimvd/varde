@@ -141,6 +141,17 @@ busctl --user call org.varde.desktop /org/varde/desktop org.gtk.Actions Activate
     'sava{sv}' title-set 1 '(ts)' 0 '{"version": 1, "id": "build", "text": "Building"}' 0
 ```
 
+## On-screen display
+
+Varde confirms volume, mute, output, microphone mute, and Do Not Disturb
+changes with a small display near the bottom of the focused monitor. Scripts
+can show their own with `varde osd`; a newer display replaces the current one.
+
+```sh
+varde osd 󰆏 "Screenshot copied"
+varde osd --level 40 󰃠
+```
+
 ## Launcher actions
 
 Type `>` in the application launcher or run `varde actions` to open the action

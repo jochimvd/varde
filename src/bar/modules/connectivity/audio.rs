@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{rc::Rc, time::Duration};
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -6,6 +6,7 @@ use gtk::prelude::*;
 use super::command::{Button, Refresh, Shown, command, on_click, spawn_shell_then_refresh, watch};
 use crate::background;
 use crate::bar::{Msg, Updates, modules::open_floating};
+use crate::osd::{Osd, Shown as OsdShown};
 
 const INTERVAL: Duration = Duration::from_secs(30);
 const DEVICE_NAME_LIMIT: usize = 16;
@@ -16,16 +17,27 @@ pub struct Audio {
 }
 
 impl Audio {
-    pub fn new(updates: &Updates) -> Self {
+    pub fn new(updates: &Updates, osd: &Rc<Osd>) -> Self {
+        let mut previous = None;
         let refresh = watch(INTERVAL, state, {
             let updates = updates.clone();
-            move |state| {
+            let osd = osd.clone();
+            move |current: Option<State>| {
+                if let (Some(before), Some(after)) = (&previous, &current)
+                    && let Some(shown) = change(before, after)
+                {
+                    osd.show(&shown);
+                }
+                let state = current.as_ref().unwrap_or(&State::UNAVAILABLE);
                 updates.send(Msg::Audio(Shown {
                     class: if state.muted { "muted" } else { "" },
                     text: state.text(),
                     tooltip: state.tooltip(),
                     visible: true,
                 }));
+                if current.is_some() {
+                    previous = current;
+                }
             }
         });
         subscribe(refresh.clone());
@@ -51,8 +63,8 @@ impl Audio {
     }
 }
 
-/// wpctl has no event stream, so PipeWire's own monitor reports when a sink or
-/// the default sink changes.
+/// wpctl has no event stream, so PipeWire's own monitor reports when a sink, a
+/// source, or the default devices change.
 fn subscribe(refresh: Refresh) {
     background::watch_lines(
         "audio-events",
@@ -60,6 +72,7 @@ fn subscribe(refresh: Refresh) {
         &["--monitor", "--no-colors"],
         move |line| {
             if line.contains("\"media.class\": \"Audio/Sink\"")
+                || line.contains("\"media.class\": \"Audio/Source\"")
                 || line.contains("\"type\": \"PipeWire:Interface:Metadata\"")
             {
                 refresh.request();
@@ -86,13 +99,22 @@ fn on_scroll(button: &gtk::Button, refresh: Refresh) {
     button.add_controller(scroll);
 }
 
+#[derive(Clone)]
 struct State {
     volume: f32,
     muted: bool,
     device: Option<String>,
+    mic_muted: Option<bool>,
 }
 
 impl State {
+    const UNAVAILABLE: Self = Self {
+        volume: 0.0,
+        muted: true,
+        device: None,
+        mic_muted: None,
+    };
+
     fn percent(&self) -> u8 {
         (self.volume * 100.0).round().clamp(0.0, 100.0) as u8
     }
@@ -124,33 +146,52 @@ impl State {
     }
 }
 
-fn state() -> State {
-    let mut state = command("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]).map_or(
-        State {
-            volume: 0.0,
-            muted: true,
-            device: None,
-        },
-        |output| {
-            parse_volume(&output).unwrap_or(State {
-                volume: 0.0,
-                muted: true,
-                device: None,
-            })
-        },
-    );
-    state.device = command("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"])
-        .and_then(|output| parse_device(&output));
-    state
-}
-
-fn parse_volume(text: &str) -> Option<State> {
-    let volume = text.split_whitespace().nth(1)?.parse().ok()?;
+fn state() -> Option<State> {
+    let output = command("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"])?;
+    let (volume, muted) = parse_volume(&output)?;
     Some(State {
         volume,
-        muted: text.contains("[MUTED]"),
-        device: None,
+        muted,
+        device: command("wpctl", &["inspect", "@DEFAULT_AUDIO_SINK@"])
+            .and_then(|output| parse_device(&output)),
+        mic_muted: command("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"])
+            .and_then(|output| parse_volume(&output))
+            .map(|(_, muted)| muted),
     })
+}
+
+/// What the OSD confirms about the change from `before` to `after`, if anything.
+fn change(before: &State, after: &State) -> Option<OsdShown> {
+    let switched = after.device.is_some() && after.device != before.device;
+    if switched || after.percent() != before.percent() || after.muted != before.muted {
+        return Some(OsdShown {
+            icon: after.text().into(),
+            text: switched.then(|| after.device.clone()).flatten(),
+            level: Some(after.percent()),
+            muted: after.muted,
+        });
+    }
+    let (Some(was), Some(muted)) = (before.mic_muted, after.mic_muted) else {
+        return None;
+    };
+    (was != muted).then(|| OsdShown {
+        icon: if muted { "󰍭" } else { "󰍬" }.into(),
+        text: Some(
+            if muted {
+                "Microphone muted"
+            } else {
+                "Microphone on"
+            }
+            .into(),
+        ),
+        level: None,
+        muted,
+    })
+}
+
+fn parse_volume(text: &str) -> Option<(f32, bool)> {
+    let volume = text.split_whitespace().nth(1)?.parse().ok()?;
+    Some((volume, text.contains("[MUTED]")))
 }
 
 fn parse_device(text: &str) -> Option<String> {
@@ -182,11 +223,53 @@ fn volume_bar(percent: u8) -> String {
 mod tests {
     use super::*;
 
+    fn output(volume: f32, muted: bool, device: &str) -> State {
+        State {
+            volume,
+            muted,
+            device: Some(device.into()),
+            mic_muted: Some(false),
+        }
+    }
+
     #[test]
     fn parses_muted_volume() {
-        let state = parse_volume("Volume: 0.50 [MUTED]").unwrap();
-        assert_eq!(state.percent(), 50);
-        assert!(state.muted);
+        assert_eq!(parse_volume("Volume: 0.50 [MUTED]"), Some((0.5, true)));
+        assert_eq!(parse_volume("Volume: 0.40"), Some((0.4, false)));
+    }
+
+    #[test]
+    fn confirms_volume_mute_and_device_changes() {
+        let before = output(0.5, false, "Speakers");
+        assert_eq!(change(&before, &before.clone()), None);
+        let louder = change(&before, &output(0.55, false, "Speakers")).unwrap();
+        assert_eq!((louder.level, louder.text), (Some(55), None));
+        assert!(
+            change(&before, &output(0.5, true, "Speakers"))
+                .unwrap()
+                .muted
+        );
+        let switched = change(&before, &output(0.5, false, "Headphones")).unwrap();
+        assert_eq!(switched.text.as_deref(), Some("Headphones"));
+    }
+
+    #[test]
+    fn confirms_microphone_mute_only_between_known_states() {
+        let before = output(0.5, false, "Speakers");
+        let muted = State {
+            mic_muted: Some(true),
+            ..before.clone()
+        };
+        assert_eq!(
+            change(&before, &muted).unwrap().text.as_deref(),
+            Some("Microphone muted")
+        );
+        let unknown = State {
+            mic_muted: None,
+            ..before.clone()
+        };
+        assert_eq!(change(&unknown, &muted), None);
+        assert_eq!(change(&muted, &unknown), None);
     }
 
     #[test]
