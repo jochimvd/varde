@@ -3,6 +3,7 @@ mod bar;
 mod input;
 mod launcher;
 mod notifications;
+mod osd;
 mod title;
 
 use gio::prelude::*;
@@ -29,7 +30,8 @@ fn main() -> glib::ExitCode {
     }
 
     let launcher = launcher::Manager::new();
-    let notifications = notifications::Manager::new();
+    let osd = osd::Osd::new();
+    let notifications = notifications::Manager::new(&osd);
     let title = title::Manager::new();
     let application_id = varde_cli::application_id();
     let app = gtk::Application::builder()
@@ -40,6 +42,7 @@ fn main() -> glib::ExitCode {
     app.connect_startup({
         let notifications = notifications.clone();
         let title = title.clone();
+        let osd = osd.clone();
         move |app| {
             title::add_actions(app, &title);
             load_styles();
@@ -47,17 +50,18 @@ fn main() -> glib::ExitCode {
                 settings.set_gtk_cursor_blink(true);
                 settings.set_gtk_cursor_blink_time(1_000);
             }
+            osd.start(app);
             notifications.start(app);
             // Whichever command starts the primary instance also starts the
             // bars, so the shell is never left running without them.
-            bar::start(app, &notifications, &title);
+            bar::start(app, &notifications, &title, &osd);
         }
     });
     app.connect_command_line({
         let launcher = launcher.clone();
         let notifications = notifications.clone();
         move |app, command_line| {
-            handle_command_line(app, command_line, &launcher, &notifications, &title)
+            handle_command_line(app, command_line, &launcher, &notifications, &title, &osd)
         }
     });
     // systemd and dev-restart stop the shell with SIGTERM; quitting through
@@ -85,6 +89,7 @@ fn handle_command_line(
     launcher: &std::rc::Rc<launcher::Manager>,
     notifications: &std::rc::Rc<notifications::Manager>,
     title: &std::rc::Rc<title::Manager>,
+    osd: &std::rc::Rc<osd::Osd>,
 ) -> glib::ExitCode {
     let request = match command::parse(&command_line.arguments()) {
         Ok(request) => request,
@@ -156,6 +161,12 @@ fn handle_command_line(
             });
         }
         command::Request::TitleClear { seq, id } => title.clear(&id, seq),
+        command::Request::Osd { icon, text, level } => osd.show(&osd::Shown {
+            icon,
+            text,
+            level,
+            muted: false,
+        }),
         command::Request::Dmenu { prompt } => {
             notifications.close();
             let result = command_line

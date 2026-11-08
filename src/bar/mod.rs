@@ -6,7 +6,7 @@ use gtk4_layer_shell::LayerShell;
 mod modules;
 mod tooltips;
 
-use crate::notifications;
+use crate::{notifications, osd::Osd};
 use modules::{
     connectivity, hyprland,
     services::{idle, privacy},
@@ -139,6 +139,7 @@ pub fn start(
     app: &gtk::Application,
     notifications: &Rc<notifications::Manager>,
     title: &Rc<crate::title::Manager>,
+    osd: &Rc<Osd>,
 ) {
     let (sender, receiver) = async_channel::unbounded();
     let updates = Updates(sender);
@@ -154,7 +155,7 @@ pub fn start(
         tray: tray::Tray::new(&updates),
         bluetooth: connectivity::Bluetooth::new(&updates),
         network: connectivity::Network::new(&updates),
-        audio: connectivity::Audio::new(&updates),
+        audio: connectivity::Audio::new(&updates, osd),
     };
     glib::timeout_add_seconds_local(1, {
         let updates = updates.clone();

@@ -7,8 +7,12 @@ mod sound;
 mod state;
 mod view;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
+use crate::osd::{self, Osd};
 use model::Snapshot;
 use state::Action;
 pub use view::{Bell, Indicator};
@@ -58,10 +62,13 @@ pub struct Manager {
     center: RefCell<Option<Center>>,
     popups: RefCell<Option<Popups>>,
     daemon: RefCell<Option<daemon::Control>>,
+    osd: Rc<Osd>,
+    /// Do not disturb as the daemon last reported it, unknown until it starts.
+    dnd: Cell<Option<bool>>,
 }
 
 impl Manager {
-    pub fn new() -> Rc<Self> {
+    pub fn new(osd: &Rc<Osd>) -> Rc<Self> {
         Rc::new(Self {
             snapshot: RefCell::new(Snapshot::unavailable()),
             app: RefCell::new(None),
@@ -69,6 +76,8 @@ impl Manager {
             center: RefCell::new(None),
             popups: RefCell::new(None),
             daemon: RefCell::new(None),
+            osd: osd.clone(),
+            dnd: Cell::new(None),
         })
     }
 
@@ -230,6 +239,25 @@ impl Manager {
     }
 
     fn apply(&self, snapshot: Snapshot) {
+        if self
+            .dnd
+            .replace(Some(snapshot.dnd))
+            .is_some_and(|dnd| dnd != snapshot.dnd)
+        {
+            self.osd.show(&osd::Shown {
+                icon: if snapshot.dnd { "󰂛" } else { "󰂚" }.into(),
+                text: Some(
+                    if snapshot.dnd {
+                        "Do not disturb on"
+                    } else {
+                        "Do not disturb off"
+                    }
+                    .into(),
+                ),
+                level: None,
+                muted: snapshot.dnd,
+            });
+        }
         if let Some(listener) = self.indicator.borrow().as_ref() {
             listener(Indicator::new(&snapshot));
         }

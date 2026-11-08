@@ -36,8 +36,8 @@ Build dependencies: a current Rust toolchain, GTK 4.12 or newer, and
 gtk4-layer-shell.
 
 Runtime dependencies: Hyprland, PipeWire, WirePlumber, iwd, BlueZ, iproute2,
-PulseAudio utilities, `uwsm-app`, and JetBrains Mono Nerd Font. Notification
-sounds use `canberra-gtk-play` and `sound-theme-freedesktop`.
+`uwsm-app`, and JetBrains Mono Nerd Font. Notification sounds use
+`canberra-gtk-play` and `sound-theme-freedesktop`.
 
 Clipboard history requires `cliphist`, `wl-copy`, and a running watcher:
 
@@ -139,6 +139,17 @@ none:
 ```sh
 busctl --user call org.varde.desktop /org/varde/desktop org.gtk.Actions Activate \
     'sava{sv}' title-set 1 '(ts)' 0 '{"version": 1, "id": "build", "text": "Building"}' 0
+```
+
+## On-screen display
+
+Varde confirms volume, mute, output, microphone mute, and Do Not Disturb
+changes with a small display near the bottom of the focused monitor. Scripts
+can show their own with `varde osd`; a newer display replaces the current one.
+
+```sh
+varde osd 󰆏 "Screenshot copied"
+varde osd --level 40 󰃠
 ```
 
 ## Launcher actions
