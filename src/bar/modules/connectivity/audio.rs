@@ -51,12 +51,21 @@ impl Audio {
     }
 }
 
+/// wpctl has no event stream, so PipeWire's own monitor reports when a sink or
+/// the default sink changes.
 fn subscribe(refresh: Refresh) {
-    background::watch_lines("audio-events", "pactl", &["subscribe"], move |event| {
-        if event.contains(" on sink ") || event.contains(" on server ") {
-            refresh.request();
-        }
-    });
+    background::watch_lines(
+        "audio-events",
+        "pw-dump",
+        &["--monitor", "--no-colors"],
+        move |line| {
+            if line.contains("\"media.class\": \"Audio/Sink\"")
+                || line.contains("\"type\": \"PipeWire:Interface:Metadata\"")
+            {
+                refresh.request();
+            }
+        },
+    );
 }
 
 fn on_scroll(button: &gtk::Button, refresh: Refresh) {

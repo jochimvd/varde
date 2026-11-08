@@ -36,8 +36,8 @@ Build dependencies: a current Rust toolchain, GTK 4.12 or newer, and
 gtk4-layer-shell.
 
 Runtime dependencies: Hyprland, PipeWire, WirePlumber, iwd, BlueZ, iproute2,
-PulseAudio utilities, `uwsm-app`, and JetBrains Mono Nerd Font. Notification
-sounds use `canberra-gtk-play` and `sound-theme-freedesktop`.
+`uwsm-app`, and JetBrains Mono Nerd Font. Notification sounds use
+`canberra-gtk-play` and `sound-theme-freedesktop`.
 
 Clipboard history requires `cliphist`, `wl-copy`, and a running watcher:
 
