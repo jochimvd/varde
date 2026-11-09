@@ -383,6 +383,8 @@ impl TitleUpdates {
 
 #[derive(Deserialize)]
 struct WorkspaceInfo {
+    /// Hyprland leaves it out for special workspaces, which are never shown.
+    #[serde(default)]
     id: i64,
     name: String,
     monitor: String,
@@ -795,7 +797,7 @@ mod tests {
                 r#"[
                     {"id": 3, "name": "3", "monitor": "DP-1", "urgent": true},
                     {"id": -1337, "name": "development", "monitor": "DP-1"},
-                    {"id": -99, "name": "special:scratchpad", "monitor": "DP-1"},
+                    {"name": "special:scratchpad", "monitor": "DP-1"},
                     {"id": 1, "name": "1", "monitor": "DP-1"},
                     {"id": 2, "name": "2", "monitor": "HDMI-A-1"}
                 ]"#,
